@@ -7,19 +7,16 @@ updates:
     groups:
       next-react:
         patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
-        update-types: [patch, minor]
+        update-types: [major, minor, patch]
       supabase:
         patterns: ["@supabase/*"]
-        update-types: [patch, minor]
+        update-types: [major, minor, patch]
       pdf-ocr:
         patterns: ["pdfjs-dist", "tesseract.js", "@tesseract.js-data/*"]
-        update-types: [patch, minor]
+        update-types: [major, minor, patch]
       node-types-and-tools:
         patterns: ["@types/node", "typescript", "highs", "lucide-react"]
-        update-types: [patch, minor]
-      npm-major:
-        patterns: ["*"]
-        update-types: [major]
+        update-types: [major, minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
