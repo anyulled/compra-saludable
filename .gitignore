@@ -11,3 +11,4 @@ coverage
 *.sqlite-shm
 .vercel
 supabase/.temp/
+.agent-native/**/.plan-url

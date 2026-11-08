@@ -2,7 +2,6 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 const household = '2d3a3934-5165-4dbc-845f-41b58bfe191e';
-process.env.MESA_HOUSEHOLD_ID = household;
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://supabase.example';
 process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'test-public-key';
 process.env.AUTHORIZED_EMAILS = 'one@example.test,two@example.test';
@@ -16,10 +15,26 @@ let signOutCount = 0;
 const db = {
   auth: { async exchangeCodeForSession() { return { error: exchangeFailure ? new Error('invalid code') : null }; },
   async signOut() { signOutCount++; }, async getUser() { return { data: { user: session ? {
+    id: '10000000-0000-4000-8000-000000000001',
     email: 'one@example.test', email_confirmed_at: '2026-01-01T00:00:00Z',
     app_metadata: { provider: 'google', providers: ['google'] }, identities: [{ provider: 'google' }],
   } : null }, error: null }; } },
-  from() { return { select() { return { eq() { return { maybeSingle: async () => ({ data: row, error }) }; } }; } }; },
+  from(table) {
+    return {
+      select() {
+        return {
+          eq() {
+            return {
+              maybeSingle: async () => ({
+                data: table === 'household_members' ? { household_id: household } : row,
+                error,
+              }),
+            };
+          },
+        };
+      },
+    };
+  },
   async rpc() { rpcCalls++; return { data: [rpcResult], error }; },
 };
 mock.module('@supabase/ssr', { exports: { createServerClient: () => db } });
@@ -27,6 +42,7 @@ mock.module('next/headers', { exports: { cookies: async () => ({ getAll: () => [
 
 const workspace = await import('../../app/api/workspace/route.ts');
 const mercadona = await import('../../app/api/mercadona/route.ts');
+const mercadonaSearch = await import('../../app/api/mercadona/search/route.ts');
 const optimizer = await import('../../app/api/optimize/route.ts');
 const pdf = await import('../../app/api/pdf-worker/route.ts');
 const ocr = await import('../../app/api/ocr-assets/[asset]/route.ts');
@@ -41,6 +57,7 @@ test('todas las rutas de datos y OCR rechazan solicitudes sin sesión', async ()
   assert.equal((await workspace.GET()).status, 401);
   assert.equal((await workspace.PUT(put({}))).status, 401);
   assert.equal((await mercadona.POST(post('/api/mercadona', {}))).status, 401);
+  assert.equal((await mercadonaSearch.POST(post('/api/mercadona/search', { query: 'garbanzos' }))).status, 401);
   assert.equal((await optimizer.POST(post('/api/optimize', {}))).status, 401);
   assert.equal((await pdf.GET()).status, 401);
   assert.equal((await ocr.GET(new Request('https://mesa.example'), { params: Promise.resolve({ asset: 'worker.min.js' }) })).status, 401);
@@ -50,6 +67,7 @@ test('las rutas autenticadas validan formato, origen y límites', async () => {
   session = { supabase: db };
   assert.equal((await mercadona.POST(post('/api/mercadona', { product: 'x'.repeat(501) }))).status, 400);
   assert.equal((await mercadona.POST(post('/api/mercadona', { product: 'texto no permitido' }))).status, 400);
+  assert.equal((await mercadonaSearch.POST(post('/api/mercadona/search', { query: '' }))).status, 400);
   assert.equal((await optimizer.POST(post('/api/optimize', {}, { 'content-length': '5000000' }))).status, 413);
   assert.equal((await optimizer.POST(post('/api/optimize', {}))).status, 400);
   assert.equal((await workspace.PUT(put({}, { origin: 'https://otro.example' }))).status, 403);

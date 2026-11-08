@@ -38,68 +38,87 @@ export async function importPdf(
     for (let number = 1; number <= doc.numPages; number++) {
       progress(`Procesando página ${number} de ${doc.numPages}…`);
       const page = await doc.getPage(number);
-      const content = await page.getTextContent();
-      let text = content.items
-        .map((item) =>
-          "str" in item ? item.str + (item.hasEOL ? "\n" : " ") : "",
-        )
-        .join("")
-        .trim();
-      let method: RecipeDraft["method"] = "text";
-      if (text.length < 30) {
-        method = "ocr";
-        try {
-          if (ocrUnavailable) throw new Error("OCR no disponible");
-          if (!worker) {
-            progress(`Preparando OCR en español para la página ${number}…`);
-            const { createWorker } = await import("tesseract.js");
-            try {
-              worker = await createWorker("spa", 1, {
-                workerPath: "/api/ocr-assets/worker.min.js",
-                corePath: "/api/ocr-assets",
-                langPath: "/api/ocr-assets",
-                cacheMethod: "none",
-              });
-            } catch (e) {
-              ocrUnavailable = true;
-              throw e;
-            }
-          }
-          const viewport = page.getViewport({ scale: 2 });
-          // Avoid excessively large canvas allocations for unusually sized pages.
-          if (viewport.width * viewport.height > 24_000_000)
-            throw new Error("Página demasiado grande para OCR");
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const context = canvas.getContext("2d");
-          if (!context)
-            throw new Error("No se pudo preparar la imagen de la página");
-          await page.render({ canvas, canvasContext: context, viewport })
-            .promise;
-          const result = await worker.recognize(canvas);
-          text = result.data.text.trim();
-          canvas.width = 0;
-          canvas.height = 0;
-          if (!text) method = "unreadable";
-        } catch {
-          method = "unreadable";
-        }
+      try {
+        const result = await textForPage(page, { worker, ocrUnavailable }, progress, number);
+        worker = result.worker;
+        ocrUnavailable = result.ocrUnavailable;
+        drafts.push(createPageDraft(file.name, documentId, number, result.text, result.method));
+      } finally {
+        page.cleanup();
       }
-      drafts.push({
-        id: crypto.randomUUID().replaceAll("-", ""),
-        filename: file.name,
-        documentId,
-        page: number,
-        text,
-        method,
-        status: "pending",
-      });
-      page.cleanup();
     }
     return drafts;
   } finally {
     if (worker) await worker.terminate();
     await task.destroy();
   }
+}
+
+function pageText(items: Array<{ str?: string; hasEOL?: boolean }>) {
+  return items.map(textItem).join("").trim();
+}
+
+function textItem(item: { str?: string; hasEOL?: boolean }) {
+  if (!("str" in item)) return "";
+  return item.str + (item.hasEOL ? "\n" : " ");
+}
+
+async function createOcrWorker(progress: (message: string) => void, number: number) {
+  progress(`Preparando OCR en español para la página ${number}…`);
+  const { createWorker } = await import("tesseract.js");
+  return createWorker("spa", 1, {
+    workerPath: "/api/ocr-assets/worker.min.js",
+    corePath: "/api/ocr-assets",
+    langPath: "/api/ocr-assets",
+    cacheMethod: "none",
+  });
+}
+
+async function recognizePage(page: any, worker: Awaited<ReturnType<typeof import("tesseract.js").createWorker>>) {
+  const viewport = page.getViewport({ scale: 2 });
+  if (viewport.width * viewport.height > 24_000_000) throw new Error("Página demasiado grande para OCR");
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("No se pudo preparar la imagen de la página");
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  try {
+    return (await worker.recognize(canvas)).data.text.trim();
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+async function textForPage(page: any, state: { worker?: Awaited<ReturnType<typeof import("tesseract.js").createWorker>>; ocrUnavailable: boolean }, progress: (message: string) => void, number: number) {
+  let text = pageText((await page.getTextContent()).items);
+  if (text.length >= 30) return { text, method: "text" as const, ...state };
+  if (state.ocrUnavailable) return { text, method: "unreadable" as const, ...state };
+  let worker = state.worker;
+  if (!worker) {
+    try {
+      worker = await createOcrWorker(progress, number);
+    } catch {
+      return { text, method: "unreadable" as const, worker: undefined, ocrUnavailable: true };
+    }
+  }
+  try {
+    const recognized = await recognizePage(page, worker);
+    return { text: recognized, method: recognized ? "ocr" as const : "unreadable" as const, worker, ocrUnavailable: false };
+  } catch {
+    return { text, method: "unreadable" as const, worker, ocrUnavailable: false };
+  }
+}
+
+function createPageDraft(filename: string, documentId: string, page: number, text: string, method: RecipeDraft["method"]): RecipeDraft {
+  return {
+    id: crypto.randomUUID().replaceAll("-", ""),
+    filename,
+    documentId,
+    page,
+    text,
+    method,
+    status: "pending",
+  };
 }

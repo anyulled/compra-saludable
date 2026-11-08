@@ -50,6 +50,22 @@ jobs:
       - name: Enforce 90% global line coverage
         run: npm run test:coverage
 
+  crap-gate:
+    name: CRAP quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Enforce CRAP score of 10 or less
+        run: npm run check:crap
+
   database-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -102,7 +118,7 @@ jobs:
 
   deploy-supabase-migrations:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-and-test, coverage, database-integration]
+    needs: [build-and-test, coverage, crap-gate, database-integration]
     concurrency:
       group: supabase-production-migrations
       cancel-in-progress: false

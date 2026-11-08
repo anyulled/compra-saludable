@@ -16,9 +16,10 @@ mock.module("next/image", {
 });
 let uploadedPaths = [];
 let downloadedPaths = [];
+let downloadFailure = false;
 mock.module("../lib/pdf-import.ts", {
   namedExports: {
-    importPdf: async (file) => [{ id: "mock-page", documentId: "11111111-1111-4111-8111-111111111111", filename: file.name, page: 1, status: "pending", method: "text", text: "ENSALADA\n100 g tomate\n1. Mezclar." }],
+    importPdf: async (file) => [{ id: `mock-${file.name}`, documentId: file.name === "Cocina.pdf" ? "11111111-1111-4111-8111-111111111111" : file.name === "A.pdf" ? "33333333-3333-4333-8333-333333333333" : file.name === "B.pdf" ? "44444444-4444-4444-8444-444444444444" : "22222222-2222-4222-8222-222222222222", filename: file.name, page: 1, status: "pending", method: "text", text: "ENSALADA\n100 g tomate\n1. Mezclar." }],
   },
 });
 mock.module("../lib/supabase/browser.ts", {
@@ -26,7 +27,7 @@ mock.module("../lib/supabase/browser.ts", {
     getSupabaseBrowserClient: () => ({ storage: { from: () => ({
       upload: async (path) => { uploadedPaths.push(path); return { error: null }; },
       remove: async () => ({ error: null }),
-      download: async (path) => { downloadedPaths.push(path); return { data: new Blob(["%PDF-1.4"]), error: null }; },
+      download: async (path) => { downloadedPaths.push(path); return downloadFailure ? { data: null, error: new Error("private storage unavailable") } : { data: new Blob(["%PDF-1.4"]), error: null }; },
     }) } }),
   },
 });
@@ -39,8 +40,61 @@ const { default: MenuReview } = await import("../components/MenuReview.tsx");
 const { default: Profiles } = await import("../components/Profiles.tsx");
 const { default: WellnessHome } = await import("../components/WellnessHome.tsx");
 const { default: Dashboard } = await import("../app/dashboard.tsx");
+const { default: RecipeEntryForm } = await import("../components/RecipeEntryForm.tsx");
+const { default: IngredientProductResolver } = await import("../components/IngredientProductResolver.tsx");
+const { DraftOriginalCard } = await import("../components/RecipeReviewPanels.tsx");
+const { WorkspaceConflictScreen } = await import("../components/WorkspaceStatusScreens.tsx");
 
 afterEach(cleanup);
+
+test("el formulario de receta conserva la vitamina D vacía, acepta cero y rechaza negativos", () => {
+  const calls = [];
+  const recipe = { name: "Plato", meal: "Comida", calories: 300, protein: 20, carbs: 25, fat: 10, notes: "", ingredients: [], vitaminDMcg: 4 };
+  render(React.createElement(RecipeEntryForm, { recipe, setRecipe: (next) => calls.push(next), products: [], selectedDraft: null, reviewConfirmed: false, setReviewConfirmed: () => {}, addRecipe: () => {} }));
+  const field = screen.getByLabelText(/Vitamina D por ración/);
+  fireEvent.change(field, { target: { value: "" } });
+  fireEvent.change(field, { target: { value: "0" } });
+  fireEvent.change(field, { target: { value: "-1" } });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].vitaminDMcg, undefined);
+  assert.equal(calls[1].vitaminDMcg, 0);
+});
+
+test("permite elegir una de varias alternativas compatibles de Mercadona", () => {
+  const chosen = [];
+  const recipe = { id: "r1", name: "Ensalada", ingredients: [{ name: "tomate", amount: 100, unit: "g", productOptions: [
+    { id: "p1", name: "Tomate pera", unit: "g", size: 500, price: 1, source: "Mercadona", warning: null, productUrl: null },
+    { id: "p2", name: "Tomate rama", unit: "g", size: 700, price: 1.5, source: "Mercadona", warning: null, productUrl: null },
+  ] }] };
+  render(React.createElement(IngredientProductResolver, { recipes: [recipe], onChoose: (...args) => chosen.push(args), onRetry: () => {} }));
+  fireEvent.click(screen.getByRole("button", { name: /Tomate pera/ }));
+  assert.equal(chosen[0][0].id, "r1");
+  assert.equal(chosen[0][1], 0);
+  assert.equal(chosen[0][2].id, "p1");
+});
+
+test("el original PDF local valida el nombre y permite previsualizar el archivo correcto", () => {
+  const previews = [], messages = [];
+  const draft = { id: "d1", filename: "Recetas.pdf", page: 1, text: "", documentId: "doc-1" };
+  render(React.createElement(DraftOriginalCard, { drafts: [draft], selectedDraft: "d1", preview: null, setPreview: (preview) => previews.push(preview), openingDocument: null, openDocument: () => {}, setMessage: (message) => messages.push(message) }));
+  const input = screen.getByLabelText("Abrir PDF original");
+  fireEvent.change(input, { target: { files: [new File(["pdf"], "otro.pdf", { type: "application/pdf" })] } });
+  assert.match(messages[0], /mismo nombre/);
+  fireEvent.change(input, { target: { files: [new File(["pdf"], "Recetas.pdf", { type: "application/pdf" })] } });
+  assert.equal(previews[0].filename, "Recetas.pdf");
+  assert.equal(previews[0].documentId, "doc-1");
+});
+
+test("la pantalla de conflicto expone descarga, reintento y descarte según su estado", () => {
+  const calls = [];
+  render(React.createElement(WorkspaceConflictScreen, { error: "Conflicto", message: "Revisa cambios", legacyCopy: "{}", status: "conflict", downloadCurrent: () => calls.push("current"), downloadLegacy: () => calls.push("legacy"), retry: () => calls.push("retry") }));
+  fireEvent.click(screen.getByRole("button", { name: "Descargar cambios de esta pestaña" }));
+  fireEvent.click(screen.getByRole("button", { name: "Descargar copia anterior del navegador" }));
+  fireEvent.click(screen.getByRole("button", { name: "Volver a intentar" }));
+  assert.ok(screen.getByRole("button", { name: /Descartar cambios/ }));
+  assert.equal(screen.getByRole("alert").textContent, "Revisa cambios");
+  assert.deepEqual(calls, ["current", "legacy", "retry"]);
+});
 
 test("los nutrientes distinguen entre cero revisado y dato desconocido, y clasifican grupos", () => {
   const patches = [];
@@ -98,12 +152,13 @@ test("la biblioteca filtra recetas y permite abrir páginas o aprobar un documen
 
 test("el menú muestra el resumen individual y envía la selección fijada", () => {
   const meals = ["Desayuno", "Comida", "Cena", "Tentempié"];
-  const recipes = meals.map((meal, i) => ({ id: `r${i}`, name: `Plato ${i}`, meal, approved: true, calories: 300, protein: 20, carbs: 30, fat: 10, sodiumMg: 100, vitaminDMcg: 1 }));
+  const recipes = meals.map((meal, i) => ({ id: `r${i}`, name: `Plato ${i}`, meal, approved: true, calories: 300, protein: 20, carbs: 30, fat: 10, sodiumMg: 100, vitaminDMcg: 1, fiberG: 5 }));
   recipes.push({ ...recipes[1], id: "alternative", name: "Alternativa" });
-  const data = { recipes, profiles: [{ name: "A", calories: 1800, protein: 90, carbs: 180, fat: 60 }, { name: "B", calories: 1500, protein: 75, carbs: 150, fat: 50 }], plan: meals.map((meal, i) => ({ day: 0, meal, recipeId: `r${i}`, portions: [1, 0.5] })), planLocks: [] };
+  const data = { recipes, profiles: [{ name: "A", calories: 1800, protein: 90, carbs: 180, fat: 60, nutritionGoals: { fiberMinG: 25 } }, { name: "B", calories: 1500, protein: 75, carbs: 150, fat: 50 }], plan: meals.map((meal, i) => ({ day: 0, meal, recipeId: `r${i}`, portions: [1, 0.5] })), planLocks: [] };
   const calls = [];
   render(React.createElement(MenuReview, { data, busy: false, stale: true, dirty: false, updateLock: (...args) => calls.push(args) }));
   assert.ok(screen.getByText(/1200 \/ 1800 kcal/));
+  assert.ok(screen.getByText(/Fibra:/));
   assert.ok(screen.getByText(/Los datos usados para este menú han cambiado/));
   fireEvent.change(screen.getByLabelText("Receta para día 1, Comida"), { target: { value: "alternative" } });
   const lunch = screen.getByLabelText("Receta para día 1, Comida").closest(".meal");
@@ -127,11 +182,13 @@ test("los perfiles omiten las preguntas respondidas y aplican la propuesta con a
   fireEvent.change(screen.getAllByLabelText("Peso (kg)")[0], { target: { value: "98" } });
   fireEvent.change(screen.getAllByLabelText("Energía (kcal/día)")[0], { target: { value: "1900" } });
   fireEvent.change(screen.getAllByLabelText("Mínimo fibra (g/día)")[0], { target: { value: "25" } });
+  fireEvent.change(screen.getAllByLabelText("Referencia de vitamina D (µg/día; opcional)")[0], { target: { value: "20" } });
   fireEvent.click(screen.getAllByRole("button", { name: "Usar referencia EFSA de 15 µg" })[0]);
   assert.deepEqual(calls.slice(1), [
     [0, { weight: 98 }],
     [0, { calories: 1900, objectiveSource: "personal", recommendationBasis: undefined }],
     [0, { nutritionGoals: { fiberMinG: 25 } }],
+    [0, { vitaminDGoalMcg: 20 }],
     [0, { vitaminDGoalMcg: 15 }],
   ]);
 });
@@ -163,6 +220,10 @@ test("dashboard carga el hogar y guarda un producto añadido manualmente", async
       return new Response(JSON.stringify({ ok: true, revision }), { status: 200 });
     }
     if (url === "/api/workspace") return new Response(JSON.stringify({ state: stored, revision }), { status: 200 });
+    if (url === "/api/mercadona/search") {
+      const { queries } = JSON.parse(init.body);
+      return Response.json({ results: queries.map((query) => ({ query, products: [{ id: "mercadona-1", name: "Producto local", unit: "g", size: 500, price: 2.5, source: "Mercadona", warning: null, productUrl: null }] })) });
+    }
     if (url === "/api/optimize") return new Response(JSON.stringify({ plan: meals.map((meal, i) => ({ day: 0, meal, recipeId: `r${i}`, portions: [1, 1] })), shopping: [{ id: "local", name: "Producto local", packages: 1, size: 500, unit: "g", price: 2.5, checked: false }], leftovers: [] }), { status: 200 });
     throw Error(`Petición inesperada: ${url}`);
   };
@@ -188,9 +249,12 @@ test("dashboard carga el hogar y guarda un producto añadido manualmente", async
     fireEvent.change(within(form).getByLabelText("Carbohidratos por ración (g)"), { target: { value: "30" } });
     fireEvent.change(within(form).getByLabelText("Grasas por ración (g)"), { target: { value: "10" } });
     fireEvent.change(within(form).getByLabelText("Sodio por ración (mg)"), { target: { value: "100" } });
-    fireEvent.change(within(form).getByLabelText("Cantidad de Producto local"), { target: { value: "100" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Añadir ingrediente" }));
+    fireEvent.change(within(form).getByLabelText("Ingrediente 1"), { target: { value: "Producto local" } });
+    fireEvent.change(within(form).getByLabelText("Cantidad del ingrediente 1"), { target: { value: "100" } });
     fireEvent.click(within(form).getByRole("button", { name: /He revisado y quiero guardar/ }));
     await waitFor(() => assert.equal(stored.recipes.length, 5), { timeout: 3000 });
+    await waitFor(() => assert.equal(stored.recipes[4].ingredients[0].productId, "mercadona-1"), { timeout: 3000 });
     assert.equal(stored.recipes[4].ingredients[0].amount, 100);
     const addedRecipe = screen.getByText("Plato casero").closest(".list-row");
     fireEvent.change(within(addedRecipe).getByLabelText("Sodio por ración (mg; vacío si se desconoce)"), { target: { value: "90" } });
@@ -322,12 +386,12 @@ test("importar un PDF guarda el original privado y permite revisar sus páginas"
     fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
     const file = new dom.window.File(["%PDF-1.4"], "Cocina.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Seleccionar PDF"), { target: { files: [file] } });
-    assert.ok(await screen.findByText(/Se han creado 1 páginas para revisión/));
+    assert.ok(await screen.findByText(/1 de 1 PDF listos para revisar/));
     assert.equal(stored.drafts.length, 1);
     assert.equal(stored.drafts[0].documentPath, `${householdId}/11111111-1111-4111-8111-111111111111.pdf`);
     assert.deepEqual(uploadedPaths, [stored.drafts[0].documentPath]);
     fireEvent.click(screen.getByRole("button", { name: "Revisar" }));
-    assert.ok(screen.getByTitle("PDF original, página 1"));
+    assert.ok(await screen.findByTitle("PDF original, página 1"));
     fireEvent.click(screen.getByRole("button", { name: "No es receta" }));
     await waitFor(() => assert.equal(stored.drafts[0].status, "discarded"), { timeout: 3000 });
     fireEvent.click(screen.getByRole("button", { name: "Reabrir" }));
@@ -336,6 +400,41 @@ test("importar un PDF guarda el original privado y permite revisar sus páginas"
     globalThis.fetch = previousFetch;
     URL.createObjectURL = previousCreate;
     URL.revokeObjectURL = previousRevoke;
+  }
+});
+
+test("importa varios PDF con trabajos visibles y mantiene cada original privado", async () => {
+  const previousFetch = globalThis.fetch;
+  uploadedPaths = [];
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  let stored = { profiles: [profile, { ...profile, name: "B" }], recipes: [], products: [], plan: [], shopping: [], confirmed: false, drafts: [], approvedDocuments: {} };
+  let revision = 1;
+  globalThis.fetch = async (url, init = {}) => {
+    if (url === "/api/workspace" && init.method === "PUT") {
+      const payload = JSON.parse(init.body);
+      assert.equal(payload.expectedRevision, revision);
+      stored = payload.state;
+      return new Response(JSON.stringify({ ok: true, revision: ++revision }), { status: 200 });
+    }
+    if (url === "/api/workspace") return new Response(JSON.stringify({ state: stored, revision }), { status: 200 });
+    throw Error(`Petición inesperada: ${url}`);
+  };
+  try {
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    const files = ["A.pdf", "B.pdf"].map((name) => new dom.window.File(["%PDF-1.4"], name, { type: "application/pdf" }));
+    fireEvent.change(screen.getByLabelText("Seleccionar PDF"), { target: { files } });
+    assert.ok(await screen.findByText(/2 de 2 PDF listos para revisar/));
+    assert.equal(stored.drafts.length, 2);
+    assert.deepEqual(uploadedPaths, [
+      `${householdId}/33333333-3333-4333-8333-333333333333.pdf`,
+      `${householdId}/44444444-4444-4444-8444-444444444444.pdf`,
+    ]);
+    assert.equal(screen.getAllByText("Listo para revisar").length, 2);
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });
 
@@ -369,5 +468,44 @@ test("una página ya guardada abre su PDF privado tras recargar", async () => {
     globalThis.fetch = previousFetch;
     URL.createObjectURL = previousCreate;
     URL.revokeObjectURL = previousRevoke;
+  }
+});
+
+test("rechaza abrir un PDF guardado bajo una ruta de otro hogar", async () => {
+  const previousFetch = globalThis.fetch;
+  downloadedPaths = [];
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  const stored = { profiles: [profile, { ...profile, name: "B" }], recipes: [], products: [], plan: [], shopping: [], confirmed: false, drafts: [{ id: "page-1", documentId: "11111111-1111-4111-8111-111111111111", documentPath: "another-household/11111111-1111-4111-8111-111111111111.pdf", filename: "Cocina.pdf", page: 1, status: "pending", method: "text", text: "ENSALADA" }], approvedDocuments: {} };
+  globalThis.fetch = async () => new Response(JSON.stringify({ state: stored, revision: 1 }), { status: 200 });
+  try {
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId: "00000000-0000-4000-8000-000000000001" }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Revisar" }));
+    assert.ok(await screen.findByText("La ruta del documento no corresponde al hogar actual."));
+    assert.deepEqual(downloadedPaths, []);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("muestra el fallo al abrir un PDF privado y termina el estado de carga", async () => {
+  const previousFetch = globalThis.fetch;
+  downloadFailure = true;
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const documentId = "11111111-1111-4111-8111-111111111111";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  const stored = { profiles: [profile, { ...profile, name: "B" }], recipes: [], products: [], plan: [], shopping: [], confirmed: false, drafts: [{ id: "page-1", documentId, documentPath: `${householdId}/${documentId}.pdf`, filename: "Cocina.pdf", page: 1, status: "pending", method: "text", text: "ENSALADA" }], approvedDocuments: {} };
+  globalThis.fetch = async () => new Response(JSON.stringify({ state: stored, revision: 1 }), { status: 200 });
+  try {
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Revisar" }));
+    assert.ok(await screen.findByText("No se pudo abrir el PDF privado."));
+    assert.ok(screen.getByRole("button", { name: "Abrir PDF original" }).disabled === false);
+  } finally {
+    downloadFailure = false;
+    globalThis.fetch = previousFetch;
   }
 });

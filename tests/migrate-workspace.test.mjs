@@ -9,7 +9,6 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const household = '2d3a3934-5165-4dbc-845f-41b58bfe191e';
 const users = ['845a5265-9279-4ae6-af20-10f4dd43b874', '90649d87-3a47-4d51-a2d6-b9186fb1129f'];
 const script = fileURLToPath(new URL('../scripts/migrate-sqlite-to-supabase.mjs', import.meta.url));
 const pdf = Buffer.from('%PDF-1.7\ncontenido sintético de documento\n%%EOF');
@@ -33,21 +32,27 @@ function fixture({ badHash = false, conflictingPath = false, filename = 'receta.
   return { directory, path, state };
 }
 
-function startApi(initialState = null, initialPdf = null) {
+function startApi(initialState = null, initialPdf = null, initialHousehold = null) {
   let workspace = initialState;
   let writeCount = 0;
   let uploaded = initialPdf;
+  let householdId = initialHousehold;
   const server = createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks);
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    if (pathname === '/rest/v1/household_workspaces' && req.method === 'GET') {
+    if (pathname === '/rest/v1/household_members' && req.method === 'GET') {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(householdId ? [{ household_id: householdId }] : []));
+    } else if (pathname === '/rest/v1/household_workspaces' && req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify(workspace ? [workspace] : []));
     } else if (pathname === '/rest/v1/household_workspaces' && req.method === 'POST') {
       writeCount++; workspace ??= JSON.parse(body.toString()); res.statusCode = 204; res.end();
-    } else if (['/rest/v1/households', '/rest/v1/household_members'].includes(pathname) && req.method === 'POST') {
+    } else if (pathname === '/rest/v1/households' && req.method === 'POST') {
+      writeCount++; householdId = JSON.parse(body.toString()).id; res.statusCode = 204; res.end();
+    } else if (pathname === '/rest/v1/household_members' && req.method === 'POST') {
       writeCount++; res.statusCode = 204; res.end();
     } else if (pathname.startsWith('/storage/v1/object/household-documents/') && req.method === 'GET') {
       if (!uploaded) { res.statusCode = 404; res.end(); }
@@ -56,14 +61,13 @@ function startApi(initialState = null, initialPdf = null) {
       writeCount++; uploaded = body; res.statusCode = 200; res.end('{}');
     } else { res.statusCode = 404; res.end(); }
   });
-  return { server, snapshot: () => ({ workspace, writeCount, uploaded }) };
+  return { server, snapshot: () => ({ workspace, writeCount, uploaded, householdId }) };
 }
 
 async function launch(path, baseUrl, args = [], overrides = {}) {
   const env = {
     ...process.env,
     MESA_LEGACY_DB_PATH: path,
-    MESA_HOUSEHOLD_ID: household,
     MESA_HOUSEHOLD_MEMBER_IDS: users.join(','),
     SUPABASE_URL: baseUrl,
     SUPABASE_SERVICE_ROLE_KEY: 'synthetic-key',
@@ -108,7 +112,9 @@ test('importa workspace y PDF, verifica bytes y admite repetir sin duplicados', 
     let result = await launch(file.path, url, ['--apply']);
     assert.equal(result.code, 0, result.err);
     assert.match(result.out, /PDF migrados y verificados por SHA-256: 1/);
-    assert.equal(api.snapshot().workspace.payload.drafts[0].documentPath, `${household}/doc1.pdf`);
+    const firstHouseholdId = api.snapshot().householdId;
+    assert.match(firstHouseholdId, /^[0-9a-f-]{36}$/i);
+    assert.equal(api.snapshot().workspace.payload.drafts[0].documentPath, `${firstHouseholdId}/doc1.pdf`);
     assert.equal(api.snapshot().workspace.payload.drafts[1].documentPath, undefined);
     assert.deepEqual(api.snapshot().uploaded, pdf);
     const writesAfterFirst = api.snapshot().writeCount;
@@ -131,11 +137,16 @@ test('rechaza diferencias remotas sin escribir y detecta PDF corrupto o rutas en
 
   for (const options of [{ badHash: true }, { conflictingPath: true }]) {
     const invalid = fixture(options);
+    const conflictApi = options.conflictingPath ? startApi() : null;
     try {
-      const result = await launch(invalid.path, 'http://127.0.0.1:9');
+      const url = conflictApi ? await listening(conflictApi.server) : 'http://127.0.0.1:9';
+      const result = await launch(invalid.path, url, conflictApi ? ['--apply'] : []);
       assert.notEqual(result.code, 0);
       assert.match(result.err, options.badHash ? /SHA-256/ : /ruta documental distinta/);
-    } finally { rmSync(invalid.directory, { recursive: true, force: true }); }
+    } finally {
+      if (conflictApi) await new Promise(resolve => conflictApi.server.close(resolve));
+      rmSync(invalid.directory, { recursive: true, force: true });
+    }
   }
 });
 
@@ -168,9 +179,9 @@ test('valida identificadores, tipos, tamaño del espacio y configuración antes 
   }
   const valid = fixture();
   try {
-    let result = await launch(valid.path, 'http://127.0.0.1:9', [], { MESA_HOUSEHOLD_ID: 'bad-uuid' });
+    let result = await launch(valid.path, 'http://127.0.0.1:9', ['--apply'], { MESA_HOUSEHOLD_MEMBER_IDS: 'bad-uuid' });
     assert.notEqual(result.code, 0);
-    assert.match(result.err, /MESA_HOUSEHOLD_ID válido/);
+    assert.match(result.err, /miembro del hogar debe tener un UUID válido/);
     result = await launch(valid.path, 'http://127.0.0.1:9', ['--apply'], { SUPABASE_SERVICE_ROLE_KEY: '' });
     assert.notEqual(result.code, 0);
     assert.match(result.err, /SUPABASE_SERVICE_ROLE_KEY/);

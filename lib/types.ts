@@ -41,7 +41,23 @@ export type Product = {
   expiresOn?: string;
   source: string;
 };
-export type Ingredient = { productId: string; amount: number };
+export type IngredientProductOption = {
+  id: string;
+  name: string;
+  unit: string | null;
+  size: number | null;
+  price: number | null;
+  source: string;
+  warning: string | null;
+  productUrl: string | null;
+};
+export type Ingredient = {
+  productId?: string;
+  name?: string;
+  unit?: string;
+  amount: number;
+  productOptions?: IngredientProductOption[];
+};
 export type Recipe = {
   id: string;
   name: string;

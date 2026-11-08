@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 import { MAX_WORKSPACE_BYTES } from "../lib/workspace-limits.mjs";
@@ -10,7 +10,7 @@ if (!sourcePathValue) {
 const sourcePath = resolve(sourcePathValue);
 const baseUrl = process.env.SUPABASE_URL?.replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const householdId = process.env.MESA_HOUSEHOLD_ID;
+let householdId = "";
 const memberIds = (process.env.MESA_HOUSEHOLD_MEMBER_IDS || "")
   .split(",")
   .map((id) => id.trim())
@@ -69,7 +69,7 @@ function validateLegacyDocument(row) {
   return { id: row.id, sha256: actualHash, bytes };
 }
 
-function attachPrivateDocumentPaths(state, documents) {
+function attachPrivateDocumentPaths(state, documents, verifyExistingPath = true) {
   const documentsById = new Map(documents.map((doc) => [doc.id, doc]));
   let linkedDraftCount = 0;
   let linkedViaStoredDocumentIdCount = 0;
@@ -85,7 +85,7 @@ function attachPrivateDocumentPaths(state, documents) {
           return draft;
         }
         const expectedPath = `${householdId}/${document.id}.pdf`;
-        if (draft.documentPath && draft.documentPath !== expectedPath) {
+        if (verifyExistingPath && draft.documentPath && draft.documentPath !== expectedPath) {
           throw new Error("Un borrador ya tiene una ruta documental distinta; no se modificó.");
         }
         linkedDraftCount += 1;
@@ -125,6 +125,23 @@ async function request(path, { method = "GET", body, prefer } = {}) {
     throw new Error(`Supabase ${path}: ${message}`);
   }
   return text ? JSON.parse(text) : null;
+}
+
+async function resolveHouseholdId() {
+  if (!apply) return randomUUID();
+  if (!baseUrl || !serviceKey || memberIds.length === 0) {
+    throw new Error("Configura SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY y MESA_HOUSEHOLD_MEMBER_IDS.");
+  }
+  if (memberIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+    throw new Error("Cada miembro del hogar debe tener un UUID válido.");
+  }
+  const memberFilter = encodeURIComponent(`in.(${memberIds.join(",")})`);
+  const memberships = await request(`household_members?select=household_id&user_id=${memberFilter}`);
+  const existingHouseholds = [...new Set(memberships.map((row) => row.household_id))];
+  if (existingHouseholds.length > 1) {
+    throw new Error("Los miembros ya pertenecen a hogares distintos; no se creó ni modificó ningún hogar.");
+  }
+  return existingHouseholds[0] || randomUUID();
 }
 
 function privateDocumentPath(doc) {
@@ -199,16 +216,14 @@ async function uploadAndVerifyDocuments(documents, existingHashes) {
 }
 
 const { state: originalState, documents } = readLegacyState(sourcePath);
-if (documents.length > 0 && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(householdId || "")) {
-  throw new Error("Configura un MESA_HOUSEHOLD_ID válido para asociar los PDFs a sus borradores.");
-}
+householdId = await resolveHouseholdId();
 const {
   state,
   linkedDraftCount,
   linkedViaStoredDocumentIdCount,
   linkedViaDocumentIdCount,
   unmatchedDraftCount,
-} = attachPrivateDocumentPaths(originalState, documents);
+} = attachPrivateDocumentPaths(originalState, documents, apply);
 if (new TextEncoder().encode(JSON.stringify(state)).byteLength > MAX_WORKSPACE_BYTES) {
   throw new Error("El workspace de origen supera el límite de 3 MiB; no se escribió nada y SQLite permanece intacta.");
 }
@@ -225,13 +240,6 @@ console.log(`Rutas privadas asociadas: ${linkedDraftCount} (storedDocumentId: ${
 if (!apply) {
   console.log("Simulación únicamente. Revisa el origen y configura miembros; usa --apply para escribir en Supabase.");
   process.exit(0);
-}
-
-if (!baseUrl || !serviceKey || !householdId || memberIds.length === 0) {
-  throw new Error("Configura SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, MESA_HOUSEHOLD_ID y MESA_HOUSEHOLD_MEMBER_IDS.");
-}
-if (!/^[0-9a-f-]{36}$/i.test(householdId) || memberIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) {
-  throw new Error("El hogar y cada miembro deben ser UUID válidos.");
 }
 
 // Check every existing object before any remote write. Upload and verify PDFs

@@ -663,6 +663,22 @@ textarea {
 .ingredient:last-of-type {
   margin-bottom: 20px;
 }
+.ingredient-edit {
+  display: grid;
+  grid-template-columns: minmax(160px, 2fr) minmax(90px, 1fr) minmax(100px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.ingredient-edit .field {
+  width: 100%;
+  margin: 0;
+}
+.ingredient-edit .field input {
+  width: 100%;
+}
+.ingredient-edit > button {
+  margin-bottom: 14px;
+}
 .toolbar {
   display: flex;
   align-items: center;
@@ -819,6 +835,12 @@ textarea {
   .form-grid.three {
     grid-template-columns: 1fr 1fr;
   }
+  .ingredient-edit {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ingredient-edit .field:first-child {
+    grid-column: 1 / -1;
+  }
   .toolbar {
     align-items: flex-start;
     flex-direction: column;
@@ -847,6 +869,29 @@ textarea {
 .draft-list {
   max-height: 420px;
   overflow: auto;
+}
+.import-job-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.import-job-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dfe7dd;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+.import-job-list li[data-status="error"] {
+  border-color: #d9a49a;
+}
+.import-job-list li span {
+  color: #73817a;
+  text-align: right;
 }
 .draft-list .list-row {
   flex-wrap: wrap;

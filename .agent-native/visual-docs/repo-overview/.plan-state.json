@@ -1,0 +1,25 @@
+{
+  "localOnly": true,
+  "kind": "plan",
+  "visualDocs": {
+    "manifest": "../../../agent-native.json",
+    "targets": [
+      "app-page-tsx",
+      "app-dashboard-tsx",
+      "components-profiles-tsx",
+      "components-library-tsx",
+      "components-menureview-tsx",
+      "components-scenariocompare-tsx",
+      "lib-optimizer-cjs",
+      "lib-optimizer-worker-mjs",
+      "lib-storage-contract-ts",
+      "lib-storage-supabase-ts",
+      "lib-supabase-authorization-ts",
+      "supabase-migrations-202611080001_private_household_storage-sql",
+      "scripts-migrate-sqlite-to-supabase-mjs",
+      "github-workflows-ci-yml",
+      "docs-operaciones-terminal-md"
+    ]
+  },
+  "createdAt": "2026-11-08T11:15:49.887Z"
+}

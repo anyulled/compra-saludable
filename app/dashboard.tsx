@@ -2,117 +2,38 @@
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useWorkspace } from "../lib/useWorkspace";
+import DashboardLayout, { type DashboardTab } from "../components/DashboardLayout";
+import DashboardWorkspaceContent from "../components/DashboardWorkspaceContent";
 import {
-  ArrowRight,
-  BookOpen,
-  CalendarDays,
-  Check,
-  ChefHat,
-  CircleAlert,
-  Leaf,
-  Plus,
-  ShoppingBasket,
-  SlidersHorizontal,
-  Sparkles,
-  Users,
-  X,
-} from "lucide-react";
-import Library from "../components/Library";
-import WellnessHome from "../components/WellnessHome";
-import Profiles from "../components/Profiles";
-import MenuReview from "../components/MenuReview";
-import NutritionExtras from "../components/NutritionExtras";
-import OptimizationSettings from "../components/OptimizationSettings";
-import ScenarioCompare from "../components/ScenarioCompare";
+  WorkspaceConflictScreen,
+  WorkspaceLoadingScreen,
+  WorkspaceSetupScreen,
+} from "../components/WorkspaceStatusScreens";
 import { planBasis } from "../lib/plan-review.mjs";
-import { documentKey, pageStatus } from "../lib/import-status.mjs";
+import { documentKey } from "../lib/import-status.mjs";
 import { importPdf } from "../lib/pdf-import";
 import { extractRecipe } from "../lib/recipe-extraction.mjs";
 import { getSupabaseBrowserClient } from "../lib/supabase/browser";
-import {
-  appendPdfDraftsAfterUpload,
-  appendPdfDraftsToWorkspace,
-} from "../lib/pdf-workspace.mjs";
-import {
-  fitsWorkspaceLimit,
-  WorkspaceWriteUncertainError,
-} from "../lib/workspace-limits.mjs";
+import { mercadonaResultMessage, requireMercadonaPrice } from "../lib/mercadona-lookup.mjs";
+import { profileObjectivesComplete, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { isCurrentPdfPreview, isHouseholdPdfPath } from "../lib/pdf-preview-state.mjs";
+import { notifyBatchReady, requestBrowserNotificationPermission, runWithConcurrency } from "../lib/pdf-batch.mjs";
+import type { PdfImportJobView } from "../components/RecipeReviewPanels";
+import { prepareStoredPdfDrafts, uploadPdfBatchAndPersist } from "../lib/pdf-upload-workflow";
+import { matchIngredientOptions, matchRecipeIngredients } from "../lib/recipe-product-match.mjs";
 import {
   initial,
-  meals,
   type State,
   type Profile,
   type Recipe,
+  type IngredientProductOption,
   type Product,
   type Meal,
+  type OptimizationOptions,
   type RecipeDraft,
 } from "../lib/types";
 
-type Tab =
-  | "Inicio"
-  | "Perfiles"
-  | "Recetas"
-  | "Biblioteca"
-  | "Productos"
-  | "Menú"
-  | "Compra";
-const tabs: Tab[] = [
-  "Inicio",
-  "Perfiles",
-  "Recetas",
-  "Biblioteca",
-  "Productos",
-  "Menú",
-  "Compra",
-];
-const icons = [
-  Leaf,
-  Users,
-  ChefHat,
-  BookOpen,
-  ShoppingBasket,
-  CalendarDays,
-  Check,
-];
 const id = () => crypto.randomUUID().replaceAll("-", "");
-const num = (v: string) => Number(v) || 0;
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-function NumberField({
-  label,
-  value,
-  onChange,
-  step = "1",
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  step?: string;
-}) {
-  return (
-    <Field label={label}>
-      <input
-        type="number"
-        min="0"
-        step={step}
-        value={value || ""}
-        onChange={(e) => onChange(num(e.target.value))}
-      />
-    </Field>
-  );
-}
 export default function Dashboard({
   email,
   householdId,
@@ -134,7 +55,7 @@ export default function Dashboard({
     downloadLegacy,
     downloadLegacySeed,
   } = useWorkspace();
-  const [tab, setTab] = useState<Tab>("Inicio");
+  const [tab, setTab] = useState<DashboardTab>("Inicio");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const dataRef = useRef(data);
@@ -145,6 +66,7 @@ export default function Dashboard({
   const [importing, setImporting] = useState(false);
   const [persistingUpload, setPersistingUpload] = useState(false);
   const [importProgress, setImportProgress] = useState("");
+  const [importJobs, setImportJobs] = useState<PdfImportJobView[]>([]);
   const [selectedDraft, setSelectedDraft] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
     filename: string;
@@ -196,12 +118,10 @@ export default function Dashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product: mercadonaInput }),
       });
-      const result = await response.json();
+      const payload = await response.json();
+      if (!response.ok) throw Error(payload.error);
+      const result = requireMercadonaPrice(payload);
       if (!response.ok) throw Error(result.error);
-      if (result.price === null)
-        throw Error(
-          "Mercadona no devolvió un precio válido. Añade el producto manualmente.",
-        );
       setProduct({
         ...product,
         name: result.name,
@@ -210,20 +130,7 @@ export default function Dashboard({
         unit: result.unit ?? "g",
         source: result.source,
       });
-      setMessage(
-        [
-          "Producto consultado para 08191. Revisa el precio, formato y tamaño antes de añadirlo.",
-          result.price === null
-            ? "No se ha recibido un precio válido; introdúcelo manualmente."
-            : "",
-          result.warning || "",
-          !result.published || result.unavailable
-            ? "La disponibilidad no está confirmada."
-            : "La disponibilidad en tienda física no está confirmada.",
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
+      setMessage(mercadonaResultMessage(result));
     } catch (e) {
       setMessage(
         e instanceof Error ? e.message : "No se pudo consultar Mercadona.",
@@ -252,67 +159,64 @@ export default function Dashboard({
     });
     setMessage("Producto añadido.");
   };
-  const uploadPdf = async (file: File) => {
+  const updateProduct = (productId: string, patch: Partial<Product>) =>
+    setData((state) => ({
+      ...state,
+      products: state.products.map((item) =>
+        item.id === productId ? { ...item, ...patch } : item,
+      ),
+    }));
+  const uploadPdf = async (files: File[]) => {
+    if (files.length > 10) {
+      setMessage("Selecciona como máximo 10 PDF por lote.");
+      return;
+    }
     if (storageStatus !== "ready") {
       setMessage("Espera a que el espacio compartido esté guardado antes de importar un PDF.");
       return;
     }
+    const notificationsEnabled = await requestBrowserNotificationPermission();
     flushSync(() => setImporting(true));
     setMessage("");
+    setImportJobs(files.map((file, index) => ({ id: `${index}-${file.name}`, name: file.name, status: "queued", progress: "" })));
+    const updateJob = (index: number, patch: Partial<PdfImportJobView>) => setImportJobs((jobs) => jobs.map((job, jobIndex) => jobIndex === index ? { ...job, ...patch } : job));
     try {
-      const drafts = await importPdf(file, setImportProgress);
-      const documentId = drafts[0]?.documentId;
-      if (!documentId) throw Error("El PDF no contiene páginas para importar.");
-      if (!/^[0-9a-f-]{36}$/i.test(householdId))
-        throw Error("No se ha configurado el hogar para guardar el original.");
-      const documentPath = `${householdId}/${documentId}.pdf`;
-      const storedDrafts = drafts.map((draft) => ({ ...draft, documentPath }));
-      if (!fitsWorkspaceLimit(appendPdfDraftsToWorkspace(dataRef.current, storedDrafts)))
-        throw Error("Los borradores superarían el límite de 3 MiB del espacio compartido.");
-      setImportProgress("Guardando el PDF original en almacenamiento privado…");
-      const storage = getSupabaseBrowserClient().storage.from("household-documents");
-      const nextState = await appendPdfDraftsAfterUpload({
-        upload: async () => {
-          const { error: uploadError } = await storage.upload(documentPath, file, {
-          contentType: "application/pdf",
-          cacheControl: "3600",
-          upsert: false,
-          });
-          if (uploadError) throw Error("No se pudo guardar el PDF original en el hogar.");
-        },
-        getLatestWorkspace: () => dataRef.current,
-        drafts: storedDrafts,
+      setImportProgress(`Procesando hasta dos archivos a la vez · ${files.length} en cola.`);
+      const results = await runWithConcurrency(files, 2, async (file: File, index: number) => {
+        updateJob(index, { status: "processing", progress: "Iniciando PDF y OCR…" });
+        try {
+          const drafts = await importPdf(file, (progress) => updateJob(index, { status: "processing", progress }));
+          const prepared = prepareStoredPdfDrafts(drafts, householdId, dataRef.current);
+          return { file, drafts: prepared.storedDrafts, documentPath: prepared.documentPath, filename: file.name, pages: drafts.length };
+        } catch (error) {
+          updateJob(index, { status: "error", progress: error instanceof Error ? error.message : "No se pudo leer el PDF." });
+          throw error;
+        }
       });
-      setPersistingUpload(true);
-      try {
-        if (!fitsWorkspaceLimit(nextState)) {
-          const { error: cleanupError } = await storage.remove([documentPath]);
-          if (cleanupError)
-            throw Error("Los borradores superan 3 MiB y no se pudo confirmar la limpieza del PDF privado.");
-          throw Error("Los borradores superarían el límite de 3 MiB del espacio compartido.");
+      const successful = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      let batchFailure: string | null = null;
+      if (successful.length) {
+        successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "saving", progress: "Guardando originales y páginas…" }));
+        setImportProgress("Guardando en el espacio compartido…");
+        setPersistingUpload(true);
+        try {
+          const storage = getSupabaseBrowserClient().storage.from("household-documents");
+          await uploadPdfBatchAndPersist({ items: successful, storage, getLatestWorkspace: () => dataRef.current, persist: persistWorkspace });
+          successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "done", progress: `${item.pages} páginas · pendiente de revisión` }));
+        } catch (error) {
+          batchFailure = error instanceof Error ? error.message : "No se pudo guardar el lote.";
+          successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "error", progress: batchFailure || "No se pudo guardar el lote." }));
+        } finally {
+          setPersistingUpload(false);
         }
-        await persistWorkspace(nextState);
-      } catch (persistError) {
-        if (!(persistError instanceof WorkspaceWriteUncertainError)) {
-          const { error: cleanupError } = await storage.remove([documentPath]);
-          if (cleanupError)
-            throw Error("No se guardó el borrador y no se pudo confirmar la limpieza del PDF privado.");
-        }
-        throw persistError;
-      } finally {
-        setPersistingUpload(false);
       }
-      const unreadable = drafts.filter((d) => d.method === "unreadable").length;
-      setPreview({
-        filename: file.name,
-        documentId,
-        url: URL.createObjectURL(file),
-      });
-      setMessage(
-        `Se han creado ${drafts.length} páginas para revisión.${unreadable ? ` ${unreadable} no se han podido leer y requieren revisión manual.` : ""} No se han aprobado recetas automáticamente.`,
-      );
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "No se pudo leer el PDF.");
+      const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${files[index].name}: ${result.reason instanceof Error ? result.reason.message : "error desconocido"}`] : []);
+      if (batchFailure) failures.push(batchFailure);
+      const savedCount = batchFailure ? 0 : successful.length;
+      const summary = `${savedCount} de ${files.length} PDF listos para revisar${savedCount ? ` (${successful.map((item) => `${item.filename}: ${item.pages} páginas`).join("; ")})` : ""}.${failures.length ? ` Errores: ${failures.join("; ")}` : ""}`;
+      setMessage(summary);
+      const notified = savedCount > 0 && notifyBatchReady("Recetarios listos para revisar", `${savedCount} PDF procesados; abre Recetas para revisar las páginas.${failures.length ? ` ${failures.length} con errores.` : ""}`);
+      if (!notified && !notificationsEnabled) setMessage(`${summary} Activa las notificaciones del navegador para recibir avisos de próximos lotes.`);
     } finally {
       setImportProgress("");
       setImporting(false);
@@ -340,10 +244,9 @@ export default function Dashboard({
     }));
   const openDocument = async (draft: RecipeDraft) => {
     const documentId = draft.storedDocumentId || draft.documentId;
-    if (preview?.documentId === documentId && preview?.url) return;
+    if (isCurrentPdfPreview(preview, documentId)) return;
     if (!documentId || !draft.documentPath) return;
-    const expectedPath = `${householdId}/${documentId}.pdf`;
-    if (draft.documentPath !== expectedPath) {
+    if (!isHouseholdPdfPath(draft.documentPath, householdId, documentId)) {
       setMessage("La ruta del documento no corresponde al hogar actual.");
       return;
     }
@@ -385,7 +288,7 @@ export default function Dashboard({
       approved: false,
     });
   };
-  const addRecipe = () => {
+  const addRecipe = async () => {
     if (selectedDraft && !reviewConfirmed) {
       setMessage(
         "Confirma que has revisado el original, las raciones y todos los ingredientes antes de guardar.",
@@ -398,26 +301,25 @@ export default function Dashboard({
         (n) => n <= 0,
       ) ||
       !recipe.ingredients.length ||
-      recipe.ingredients.some((i) => i.amount <= 0)
+      recipe.ingredients.some((i) => i.amount <= 0 || !i.name?.trim())
     ) {
       setMessage(
         "Completa nombre, nutrientes e ingredientes con cantidades positivas.",
       );
       return;
     }
+    const newRecipe: Recipe = {
+      ...recipe,
+      id: id(),
+      approved: true,
+      sourceDraftId: selectedDraft || undefined,
+      ingredients: recipe.ingredients.map((ingredient) => ({ ...ingredient, name: ingredient.name?.trim(), productId: undefined, productOptions: undefined })),
+    };
     setData((s) => {
       const source = (s.drafts || []).find((d) => d.id === selectedDraft);
       return {
         ...s,
-        recipes: [
-          ...s.recipes,
-          {
-            ...recipe,
-            id: id(),
-            approved: true,
-            sourceDraftId: selectedDraft || undefined,
-          },
-        ],
+        recipes: [...s.recipes, newRecipe],
         drafts: source
           ? (s.drafts || []).map((d) =>
               d.id === source.id ? { ...d, status: "reviewing" } : d,
@@ -428,23 +330,75 @@ export default function Dashboard({
           : s.approvedDocuments,
       };
     });
+    const sourceWasSelected = Boolean(selectedDraft);
     setRecipe({
-      id: "",
-      name: "",
-      meal: "Comida",
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      ingredients: [],
-      rating: 3,
-      notes: "",
-      approved: false,
+      id: "", name: "", meal: "Comida", calories: 0, protein: 0, carbs: 0, fat: 0,
+      ingredients: [], rating: 3, notes: "", approved: false,
     });
     setSelectedDraft(null);
-    setMessage(
-      "Receta revisada y guardada. La página original sigue disponible entre los borradores.",
-    );
+    setMessage("Receta revisada y guardada. Buscando sus ingredientes en Mercadona…");
+    try {
+      const names = [...new Set(newRecipe.ingredients.map((ingredient) => ingredient.name!.trim()))];
+      const response = await fetch("/api/mercadona/search", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queries: names }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw Error(payload.error || "No se pudieron buscar los ingredientes en Mercadona.");
+      const matches = matchRecipeIngredients(newRecipe.ingredients, payload.results || []);
+      setData((state) => ({
+        ...state,
+        recipes: state.recipes.map((saved) => saved.id !== newRecipe.id ? saved : {
+          ...saved,
+          ingredients: matches.ingredients,
+        }),
+        products: [...state.products, ...matches.products.filter((product) => !state.products.some((existing) => existing.id === product.id))],
+      }));
+      setMessage(matches.unresolvedCount ? `Receta guardada. Revisa ${matches.unresolvedCount} ingrediente(s) en “Elegir productos de Mercadona”.${sourceWasSelected ? " El PDF original sigue disponible en la biblioteca." : ""}` : `Receta guardada y productos únicos añadidos al catálogo.${sourceWasSelected ? " El PDF original sigue disponible en la biblioteca." : ""}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? `Receta guardada. No se pudo completar la búsqueda: ${error.message}` : "Receta guardada, pero no se pudo buscar en Mercadona.");
+    }
+  };
+  const updateRecipe = (recipeId: string, patch: Partial<Recipe>) =>
+    setData((state) => ({
+      ...state,
+      recipes: state.recipes.map((item) =>
+        item.id === recipeId ? { ...item, ...patch } : item,
+      ),
+    }));
+  const chooseIngredientProduct = (selectedRecipe: Recipe, ingredientIndex: number, chosen: Product) => {
+    setData((state) => {
+      const recipes = state.recipes.map((saved) => saved.id !== selectedRecipe.id ? saved : {
+        ...saved,
+        ingredients: saved.ingredients.map((ingredient, index) => index !== ingredientIndex ? ingredient : chosen.id
+          ? { ...ingredient, productId: chosen.id, productOptions: undefined }
+          : { ...ingredient, productOptions: undefined }),
+      });
+      const products = chosen.id && !state.products.some((item) => item.id === chosen.id) ? [...state.products, chosen] : state.products;
+      return { ...state, recipes, products };
+    });
+    setMessage(chosen.id ? `Producto ${chosen.name} asociado a ${selectedRecipe.name}.` : `El ingrediente “${selectedRecipe.ingredients[ingredientIndex]?.name || ""}” queda sin asociar.`);
+  };
+  const retryIngredientSearch = async (selectedRecipe: Recipe, ingredientIndex: number) => {
+    const ingredient = selectedRecipe.ingredients[ingredientIndex];
+    if (!ingredient?.name) return;
+    setMessage(`Buscando ${ingredient.name} en Mercadona…`);
+    try {
+      const response = await fetch("/api/mercadona/search", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queries: [ingredient.name] }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw Error(payload.error || "No se pudo repetir la búsqueda.");
+      const options: IngredientProductOption[] = payload.results?.[0]?.products || [];
+      const match = matchIngredientOptions(ingredient, options);
+      if (match.product) {
+        chooseIngredientProduct(selectedRecipe, ingredientIndex, match.product);
+      } else {
+        updateRecipe(selectedRecipe.id, { ingredients: selectedRecipe.ingredients.map((entry, index) => index === ingredientIndex ? match.ingredient : entry) });
+        setMessage(options.length ? `Se encontraron ${options.length} alternativas. Elige la adecuada para ${ingredient.name}.` : `No se encontraron coincidencias para ${ingredient.name}.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo repetir la búsqueda.");
+    }
   };
   const generate = async () => {
     setBusy(true);
@@ -487,1149 +441,95 @@ export default function Dashboard({
     }
   };
   const updateLock = (day: number, meal: Meal, recipeId: string | null) =>
-    setData((s) => ({
-      ...s,
-      planLocks: [
-        ...(s.planLocks || []).filter((l) => l.day !== day || l.meal !== meal),
-        ...(recipeId ? [{ day, meal, recipeId }] : []),
-      ],
-      planDirty: true,
+    setData((state) => withPlanLock(state, day, meal, recipeId));
+  const updateOptimizationOptions = (patch: Partial<OptimizationOptions>) =>
+    setData((state) => ({
+      ...state,
+      optimizationOptions: { ...state.optimizationOptions, ...patch },
       confirmed: false,
     }));
+  const confirmPlan = () => {
+    setData((state) => ({ ...state, confirmed: true }));
+    setTab("Compra");
+  };
+  const checkShoppingItem = (itemId: string, checked: boolean) =>
+    setData((state) => withShoppingCheck(state, itemId, checked));
   const stale =
     data.plan.length > 0 &&
     (!data.planBasis || data.planBasis !== planBasis(data));
   const dirty = !!data.planDirty;
-  const ready = data.profiles.every(
-    (p) => p.calories > 0 && p.protein > 0 && p.carbs > 0 && p.fat > 0,
-  );
+  const ready = data.profiles.every(profileObjectivesComplete);
   const selectedPage = (data.drafts || []).find((d) => d.id === selectedDraft);
   const suggestions = selectedPage ? extractRecipe(selectedPage.text) : null;
   const recipeById = (rid: string) => data.recipes.find((r) => r.id === rid);
   const total = data.shopping.reduce((n, p) => n + p.price * p.packages, 0);
-  if (storageStatus === "loading")
-    return (
-      <main className="storage-screen">
-        <h1>Abriendo vuestro espacio…</h1>
-        <p>Preparando los datos compartidos.</p>
-      </main>
-    );
-  if (storageStatus === "setup")
-    return (
-      <main className="storage-screen">
-        <h1>Espacio pendiente de importación.</h1>
-        <p>
-          El hogar compartido aún no se ha preparado. El administrador debe
-          importar los datos o crear el seed inicial antes de habilitar las
-          escrituras. Esta sesión no modificará el espacio vacío.
-        </p>
-        {storageError && <p role="alert">{storageError}</p>}
-        <div className="storage-actions">
-          {legacySeed && (
-            <button
-              className="secondary"
-              onClick={downloadLegacySeed}
-            >
-              Descargar la copia local para migrarla
-            </button>
-          )}
-          {legacyCopy && (
-            <button className="secondary" onClick={downloadLegacy}>
-              Descargar copia antigua
-            </button>
-          )}
-          <button className="primary" onClick={() => window.location.reload()}>
-            Comprobar de nuevo
-          </button>
-        </div>
-      </main>
-    );
-  if (storageStatus === "conflict" || storageStatus === "error")
-    return (
-      <main className="storage-screen">
-        <h1>Hay cambios que revisar.</h1>
-        <p>{storageError}</p>
-        {message && <p role="alert">{message}</p>}
-        <p>
-          Los cambios de esta pestaña se conservan mientras permanezca abierta.
-          Puedes descargarlos antes de volver a cargar.
-        </p>
-        <div className="storage-actions">
-          <button className="primary" onClick={downloadCurrent}>
-            Descargar cambios de esta pestaña
-          </button>
-          {legacyCopy && (
-            <button className="secondary" onClick={downloadLegacy}>
-              Descargar copia anterior del navegador
-            </button>
-          )}
-          <button className="secondary" onClick={() => void retry()}>
-            Volver a intentar
-          </button>
-          {storageStatus === "conflict" && (
-            <button
-              className="text-button"
-              onClick={() => window.location.reload()}
-            >
-              Descartar cambios de esta pestaña y cargar la versión compartida
-            </button>
-          )}
-        </div>
-      </main>
-    );
+  if (storageStatus === "loading") return <WorkspaceLoadingScreen />;
+  if (storageStatus === "setup") return <WorkspaceSetupScreen error={storageError} legacySeed={legacySeed} legacyCopy={legacyCopy} downloadLegacySeed={downloadLegacySeed} downloadLegacy={downloadLegacy} />;
+  if (storageStatus === "conflict" || storageStatus === "error") return <WorkspaceConflictScreen error={storageError} message={message} legacyCopy={legacyCopy} status={storageStatus} downloadCurrent={downloadCurrent} downloadLegacy={downloadLegacy} retry={() => void retry()} />;
   return (
-    <>
-    <div className="shell" inert={importing || persistingUpload || undefined}>
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-icon">
-            <Leaf size={19} />
-          </span>
-          <div>
-            <strong>mesa</strong>
-            <small>COMER BIEN, JUNTOS</small>
-          </div>
-        </div>
-        <div className="nav-label">TU ESPACIO</div>
-        <nav>
-          {tabs.map((t, i) => {
-            const Icon = icons[i];
-            return (
-              <button
-                key={t}
-                className={tab === t ? "nav active" : "nav"}
-                onClick={() => {
-                  setTab(t);
-                  setMessage("");
-                }}
-              >
-                <Icon size={18} />
-                {t}
-                {t === "Compra" && data.shopping.length > 0 && (
-                  <span className="nav-count">{data.shopping.length}</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="side-note">
-          <span className="side-spark">
-            <Sparkles size={17} />
-          </span>
-          <strong>Un poco de planificación,</strong>
-          <p>mucho más tiempo para disfrutar.</p>
-        </div>
-        <div className="side-bottom">
-          HECHO PARA VUESTRA MESA <span>♥</span>
-        </div>
-      </aside>
-      <main className="main">
-        <header className="topbar">
-          <span>
-            VUESTRO ESPACIO <span className="slash">/</span> {tab.toUpperCase()}
-          </span>
-          <div>
-            <button className="text-button" onClick={downloadCurrent}>
-              Descargar copia
-            </button>
-            <span className="location">◉ &nbsp; 08191</span>
-            <span className="avatar" title={email}>
-              {email.slice(0, 1).toUpperCase() || "M"}
-            </span>
-            <form action="/auth/signout" method="post" className="signout-form">
-              <button className="text-button" type="submit">
-                Cerrar sesión
-              </button>
-            </form>
-          </div>
-        </header>
-        <div className="content">
-          {(legacyCopy || legacyWarning) && (
-            <div className="warning">
-              <CircleAlert size={18} />
-              <span>
-                {legacyWarning ||
-                  "Hay una copia anterior en este navegador diferente de SQLite. No se ha sobrescrito ni importado automáticamente."}{" "}
-                {legacyCopy && (
-                  <button className="text-button" onClick={downloadLegacy}>
-                    Descargar copia anterior
-                  </button>
-                )}
-              </span>
-            </div>
-          )}
-          {storageStatus === "saving" && (
-            <p className="storage-status" role="status">
-              Guardando en el espacio compartido…
-            </p>
-          )}
-          {message && (
-            <div className="notice" role="status">
-              <CircleAlert size={18} />
-              <span>{message}</span>
-              <button onClick={() => setMessage("")} aria-label="Cerrar">
-                <X size={16} />
-              </button>
-            </div>
-          )}
-          {tab === "Inicio" && <WellnessHome navigate={setTab} />}
-          {tab === "Perfiles" && (
-            <Profiles profiles={data.profiles} update={updateProfile} />
-          )}
-          {tab === "Productos" && (
-            <>
-              <div className="eyebrow muted">VUESTRA DESPENSA</div>
-              <h1 className="page-title">
-                Productos <em>y envases.</em>
-              </h1>
-              <p className="intro">
-                Añadid los productos que usáis y la cantidad que ya tenéis en
-                casa.
-              </p>
-              <div className="warning">
-                <CircleAlert size={19} />
-                <span>
-                  Consulta individual a una API no oficial de Mercadona para
-                  08191. Los precios pueden cambiar y no confirman la
-                  disponibilidad en tienda física. Revisa los datos antes de
-                  añadirlos.
-                </span>
-              </div>
-              <section className="card">
-                <h2>Consultar Mercadona</h2>
-                <p className="help">
-                  Pega el enlace de un producto de la tienda online o introduce
-                  su identificador numérico.
-                </p>
-                <div className="lookup">
-                  <input
-                    aria-label="Identificador o enlace de Mercadona"
-                    value={mercadonaInput}
-                    onChange={(e) => setMercadonaInput(e.target.value)}
-                    placeholder="Ej. 10005"
-                  />
-                  <button
-                    className="secondary"
-                    disabled={mercadonaBusy}
-                    onClick={lookupMercadona}
-                  >
-                    {mercadonaBusy ? "Consultando…" : "Consultar producto"}
-                  </button>
-                </div>
-              </section>
-              <section className="card">
-                <h2>Añadir producto</h2>
-                <div className="form-grid three">
-                  <Field label="Nombre">
-                    <input
-                      value={product.name}
-                      onChange={(e) =>
-                        setProduct({ ...product, name: e.target.value })
-                      }
-                      placeholder="Ej. Garbanzos cocidos"
-                    />
-                  </Field>
-                  <Field label="Unidad">
-                    <select
-                      value={product.unit}
-                      onChange={(e) =>
-                        setProduct({ ...product, unit: e.target.value })
-                      }
-                    >
-                      <option>g</option>
-                      <option>ml</option>
-                      <option>unidades</option>
-                    </select>
-                  </Field>
-                  <NumberField
-                    label="Tamaño del envase"
-                    value={product.size}
-                    onChange={(v) => setProduct({ ...product, size: v })}
-                  />
-                  <NumberField
-                    label="Precio por envase (€)"
-                    value={product.price}
-                    onChange={(v) => setProduct({ ...product, price: v })}
-                    step="0.01"
-                  />
-                  <NumberField
-                    label="Existencias en casa"
-                    value={product.stock}
-                    onChange={(v) => setProduct({ ...product, stock: v })}
-                  />
-                  <Field label="Caducidad de existencias (opcional)">
-                    <input
-                      type="date"
-                      value={product.expiresOn || ""}
-                      onChange={(e) =>
-                        setProduct({
-                          ...product,
-                          expiresOn: e.target.value || undefined,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Origen del dato">
-                    <input
-                      value={product.source}
-                      onChange={(e) =>
-                        setProduct({ ...product, source: e.target.value })
-                      }
-                    />
-                  </Field>
-                </div>
-                <button className="primary" onClick={addProduct}>
-                  <Plus size={17} /> Añadir producto
-                </button>
-              </section>
-              <div className="list">
-                {data.products.map((p) => (
-                  <div className="list-row" key={p.id}>
-                    <div>
-                      <strong>{p.name}</strong>
-                      <p>
-                        {p.size} {p.unit} / envase · {p.stock} {p.unit} en casa
-                        · {p.source}
-                      </p>
-                      <label className="field">
-                        Existencias actuales ({p.unit})
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.1"
-                          value={p.stock}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (
-                              v === "" ||
-                              !Number.isFinite(Number(v)) ||
-                              Number(v) < 0
-                            )
-                              return;
-                            setData((s) => ({
-                              ...s,
-                              products: s.products.map((x) =>
-                                x.id === p.id ? { ...x, stock: Number(v) } : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                      <label className="field">
-                        Precio por envase (€)
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={p.price}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (
-                              v === "" ||
-                              !Number.isFinite(Number(v)) ||
-                              Number(v) < 0
-                            )
-                              return;
-                            setData((s) => ({
-                              ...s,
-                              products: s.products.map((x) =>
-                                x.id === p.id ? { ...x, price: Number(v) } : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                      <label className="field">
-                        Caducidad de existencias
-                        <input
-                          type="date"
-                          value={p.expiresOn || ""}
-                          onChange={(e) => {
-                            const value = e.target.value || undefined;
-                            setData((s) => ({
-                              ...s,
-                              products: s.products.map((x) =>
-                                x.id === p.id ? { ...x, expiresOn: value } : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                    </div>
-                    <b>{p.price.toFixed(2)} €</b>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {tab === "Recetas" && (
-            <>
-              <div className="eyebrow muted">02 / VUESTRA COCINA</div>
-              <h1 className="page-title">
-                Vuestras <em>recetas.</em>
-              </h1>
-              <p className="intro">
-                Añadid recetas revisadas con cantidades y valores por ración.
-              </p>
-              <div className="warning">
-                <CircleAlert size={19} />
-                <span>
-                  Los PDF se procesan en este navegador. Revisa el texto, las
-                  raciones y los valores nutricionales antes de guardar. Las
-                  sugerencias son orientativas y no validan las recetas ni sus
-                  valores nutricionales.
-                </span>
-              </div>
-              <section className="card">
-                <h2>Importar un recetario</h2>
-                <p className="help">
-                  Selecciona un PDF de tu dispositivo. Se crea un borrador por
-                  página; las páginas pueden contener índices o varias recetas.
-                  Las páginas con poco texto se procesan con OCR en español.
-                </p>
-                <Field label="Seleccionar PDF">
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    disabled={importing}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (file) void uploadPdf(file);
-                    }}
-                  />
-                </Field>
-                {importing && (
-                  <p role="status">
-                    {importProgress || "Leyendo el documento…"}
-                  </p>
-                )}
-                <p className="help">
-                  El PDF y el OCR se procesan en este navegador. Los borradores
-                  y el original se guardan en vuestro espacio privado. Revisa
-                  manualmente el texto y las recetas detectadas.
-                </p>
-              </section>
-              {(data.drafts || []).length > 0 && (
-                <section className="card">
-                  <h2>Páginas importadas</h2>
-                  <p className="help">
-                    Una página puede contener varias recetas. Cuando hayas
-                    añadido todas sus recetas, márcala como revisada; si no
-                    contiene recetas, márcala como descartada. Filtra por estado
-                    en la biblioteca.
-                  </p>
-                  <div className="draft-list">
-                    {(data.drafts || []).map((d) => (
-                      <div className="list-row" key={d.id}>
-                        <div>
-                          <strong>{d.filename}</strong>
-                          <p>
-                            Página {d.page} ·{" "}
-                            {d.method === "ocr"
-                              ? "OCR"
-                              : d.method === "unreadable"
-                                ? "Sin texto legible"
-                                : "Texto extraído"}{" "}
-                            ·{" "}
-                            {pageStatus(d) === "reviewed"
-                              ? "Revisada"
-                              : pageStatus(d) === "discarded"
-                                ? "Descartada"
-                                : pageStatus(d) === "reviewing"
-                                  ? "En revisión"
-                                  : "Pendiente"}{" "}
-                            ·{" "}
-                            {d.text.slice(0, 90) ||
-                              "Revisa el documento original"}
-                            …
-                          </p>
-                        </div>
-                        <button
-                          className="secondary"
-                          onClick={() => reviewDraft(d)}
-                        >
-                          {selectedDraft === d.id ? "Revisando" : "Revisar"}
-                        </button>
-                        {pageStatus(d) !== "reviewed" &&
-                          pageStatus(d) !== "discarded" &&
-                          data.recipes.some(
-                            (r) => r.sourceDraftId === d.id,
-                          ) && (
-                            <button
-                              className="text-button"
-                              onClick={() => setPageStatus(d, "reviewed")}
-                            >
-                              Completar revisión
-                            </button>
-                          )}
-                        {pageStatus(d) !== "reviewed" &&
-                          pageStatus(d) !== "discarded" &&
-                          !data.recipes.some(
-                            (r) => r.sourceDraftId === d.id,
-                          ) && (
-                            <button
-                              className="text-button"
-                              onClick={() => {
-                                setPageStatus(d, "discarded");
-                                if (selectedDraft === d.id)
-                                  setSelectedDraft(null);
-                              }}
-                            >
-                              No es receta
-                            </button>
-                          )}
-                        {(pageStatus(d) === "reviewed" ||
-                          pageStatus(d) === "discarded") && (
-                          <button
-                            className="text-button"
-                            onClick={() => setPageStatus(d, "pending")}
-                          >
-                            Reabrir
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-              {selectedDraft &&
-                (() => {
-                  const d = (data.drafts || []).find(
-                    (x) => x.id === selectedDraft,
-                  );
-                  return d ? (
-                    <section className="card">
-                      <h2>Comprobar el original</h2>
-                      {preview &&
-                      preview.documentId === (d.storedDocumentId || d.documentId) &&
-                      preview.filename === d.filename ? (
-                        <iframe
-                          title={`PDF original, página ${d.page}`}
-                          className="pdf-preview"
-                          src={`${preview.url}#page=${d.page}`}
-                        />
-                      ) : d.documentPath ? (
-                        <div>
-                          <p className="help">
-                            El original privado está guardado en el hogar y solo
-                            se abre con una sesión autorizada.
-                          </p>
-                          <button
-                            className="secondary"
-                            disabled={openingDocument === (d.storedDocumentId || d.documentId)}
-                            onClick={() => void openDocument(d)}
-                          >
-                            {openingDocument === (d.storedDocumentId || d.documentId)
-                              ? "Abriendo PDF…"
-                              : "Abrir PDF original"}
-                          </button>
-                        </div>
-                      ) : (
-                        <div>
-                          <p className="help">
-                            Este borrador antiguo no tiene un original privado.
-                            Puedes elegir de nuevo el PDF para compararlo; no se
-                            volverá a importar.
-                          </p>
-                          <Field label="Abrir PDF original">
-                            <input
-                              type="file"
-                              accept="application/pdf,.pdf"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                e.target.value = "";
-                                if (!file) return;
-                                if (file.name !== d.filename) {
-                                  setMessage(
-                                    "Selecciona el PDF con el mismo nombre que el borrador.",
-                                  );
-                                  return;
-                                }
-                                setPreview({
-                                  filename: file.name,
-                                  url: URL.createObjectURL(file),
-                                  documentId: d.storedDocumentId || d.documentId,
-                                });
-                              }}
-                            />
-                          </Field>
-                        </div>
-                      )}
-                    </section>
-                  ) : null;
-                })()}
-              {suggestions && selectedPage && (
-                <section className="card">
-                  <h2>Datos detectados</h2>
-                  <p className="help">
-                    Son sugerencias del texto de una página, no datos
-                    verificados. Elige solo los valores que correspondan a esta
-                    receta y a una ración. Comprueba cantidades y pasos en el
-                    original.
-                  </p>
-                  {suggestions.title && (
-                    <div className="suggestion">
-                      <span>
-                        <strong>Nombre posible:</strong> {suggestions.title}
-                      </span>
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          setRecipe((r) => ({ ...r, name: suggestions.title }))
-                        }
-                      >
-                        Usar nombre
-                      </button>
-                    </div>
-                  )}
-                  {suggestions.ingredients.length > 0 && (
-                    <>
-                      <div className="subheading">
-                        INGREDIENTES DETECTADOS · REVISA LA LISTA COMPLETA
-                      </div>
-                      <ul className="suggestion-list">
-                        {suggestions.ingredients.map((line, index) => (
-                          <li key={index}>{line}</li>
-                        ))}
-                      </ul>
-                      <p className="help">
-                        Asocia manualmente cada ingrediente con un producto y
-                        ajusta la cantidad por ración en el formulario. No se
-                        seleccionan productos automáticamente.
-                      </p>
-                    </>
-                  )}
-                  {suggestions.preparation && (
-                    <>
-                      <div className="subheading">PREPARACIÓN DETECTADA</div>
-                      <pre className="suggestion-text">
-                        {suggestions.preparation}
-                      </pre>
-                    </>
-                  )}
-                  {(Object.keys(suggestions.nutrition).length > 0 ||
-                    suggestions.ambiguous.length > 0) && (
-                    <>
-                      <div className="subheading">NUTRICIÓN DETECTADA</div>
-                      {suggestions.per100 && (
-                        <div className="warning">
-                          El texto menciona valores por 100 g o ml. No se pueden
-                          aplicar automáticamente como valores por ración.
-                        </div>
-                      )}
-                      {suggestions.ambiguous.length > 0 && (
-                        <div className="warning">
-                          Hay valores repetidos o ambiguos; consúltalos en el
-                          original.
-                        </div>
-                      )}
-                      <div className="suggestion-nutrients">
-                        {(
-                          [
-                            ["calories", "Energía", "kcal"],
-                            ["protein", "Proteínas", "g"],
-                            ["carbs", "Carbohidratos", "g"],
-                            ["fat", "Grasas", "g"],
-                          ] as const
-                        ).map(([key, label, unit]) =>
-                          suggestions.nutrition[key] !== undefined ? (
-                            <div className="suggestion" key={key}>
-                              <span>
-                                {label}:{" "}
-                                <strong>
-                                  {suggestions.nutrition[key]} {unit}
-                                </strong>
-                              </span>
-                              <button
-                                className="secondary"
-                                disabled={suggestions.per100}
-                                onClick={() =>
-                                  setRecipe((r) => ({
-                                    ...r,
-                                    [key]: suggestions.nutrition[key],
-                                  }))
-                                }
-                              >
-                                Usar valor
-                              </button>
-                            </div>
-                          ) : null,
-                        )}
-                      </div>
-                    </>
-                  )}
-                </section>
-              )}
-              <section className="card">
-                <h2>Nueva receta</h2>
-                <div className="form-grid three">
-                  <Field label="Nombre">
-                    <input
-                      value={recipe.name}
-                      onChange={(e) =>
-                        setRecipe({ ...recipe, name: e.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Comida">
-                    <select
-                      value={recipe.meal}
-                      onChange={(e) =>
-                        setRecipe({ ...recipe, meal: e.target.value as Meal })
-                      }
-                    >
-                      {meals.map((m) => (
-                        <option key={m}>{m}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <NumberField
-                    label="Energía por ración (kcal)"
-                    value={recipe.calories}
-                    onChange={(v) => setRecipe({ ...recipe, calories: v })}
-                  />
-                  <NumberField
-                    label="Proteínas por ración (g)"
-                    value={recipe.protein}
-                    onChange={(v) => setRecipe({ ...recipe, protein: v })}
-                  />
-                  <NumberField
-                    label="Carbohidratos por ración (g)"
-                    value={recipe.carbs}
-                    onChange={(v) => setRecipe({ ...recipe, carbs: v })}
-                  />
-                  <NumberField
-                    label="Grasas por ración (g)"
-                    value={recipe.fat}
-                    onChange={(v) => setRecipe({ ...recipe, fat: v })}
-                  />
-                  <Field label="Sodio por ración (mg)">
-                    <input
-                      type="number"
-                      min="0"
-                      value={recipe.sodiumMg ?? ""}
-                      onChange={(e) =>
-                        setRecipe({
-                          ...recipe,
-                          sodiumMg:
-                            e.target.value === ""
-                              ? undefined
-                              : Number(e.target.value),
-                        })
-                      }
-                    />
-                  </Field>
-                </div>
-                <p className="help">
-                  Usa sodio total de todos los ingredientes y la sal añadida,
-                  por ración. Un valor desconocido debe quedar vacío; 0 solo si
-                  se ha verificado. Si solo conoces la sal en gramos, 1 g de sal
-                  equivale aproximadamente a 400 mg de sodio.
-                </p>
-                <Field label="Vitamina D por ración (µg; opcional)">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={recipe.vitaminDMcg ?? ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === "") {
-                        setRecipe({ ...recipe, vitaminDMcg: undefined });
-                        return;
-                      }
-                      const n = Number(value);
-                      if (Number.isFinite(n) && n >= 0)
-                        setRecipe({ ...recipe, vitaminDMcg: n });
-                    }}
-                  />
-                </Field>
-                <Field label="Fuente de vitamina D (opcional)">
-                  <input
-                    value={recipe.vitaminDSource || ""}
-                    onChange={(e) =>
-                      setRecipe({ ...recipe, vitaminDSource: e.target.value })
-                    }
-                    placeholder="Etiqueta, tabla nutricional…"
-                  />
-                </Field>
-                <p className="help">
-                  Registra el total por ración solo si lo conoces. Un valor
-                  vacío significa desconocido; 0 µg debe estar verificado. Si la
-                  fuente usa unidades internacionales (UI), 40 UI = 1 µg.
-                </p>
-                <NutritionExtras
-                  recipe={recipe}
-                  update={(patch) => setRecipe((r) => ({ ...r, ...patch }))}
-                />
-                <Field label="Preparación y fuente nutricional">
-                  <textarea
-                    value={recipe.notes}
-                    onChange={(e) =>
-                      setRecipe({ ...recipe, notes: e.target.value })
-                    }
-                  />
-                </Field>
-                <div className="subheading">INGREDIENTES POR RACIÓN</div>
-                {data.products.length === 0 && (
-                  <p className="help">
-                    Añade productos primero para poder seleccionar ingredientes.
-                  </p>
-                )}
-                {data.products.map((p) => {
-                  const ingredient = recipe.ingredients.find(
-                    (i) => i.productId === p.id,
-                  );
-                  return (
-                    <div className="ingredient" key={p.id}>
-                      <span>
-                        {p.name} <small>({p.unit})</small>
-                      </span>
-                      <input
-                        aria-label={`Cantidad de ${p.name}`}
-                        type="number"
-                        min="0"
-                        value={ingredient?.amount || ""}
-                        placeholder="0"
-                        onChange={(e) => {
-                          const value = num(e.target.value);
-                          setRecipe({
-                            ...recipe,
-                            ingredients: [
-                              ...recipe.ingredients.filter(
-                                (i) => i.productId !== p.id,
-                              ),
-                              ...(value > 0
-                                ? [{ productId: p.id, amount: value }]
-                                : []),
-                            ],
-                          });
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-                {selectedDraft && (
-                  <label className="review-check">
-                    <input
-                      type="checkbox"
-                      checked={reviewConfirmed}
-                      onChange={(e) => setReviewConfirmed(e.target.checked)}
-                    />
-                    <span>
-                      He contrastado el documento original, el número de
-                      raciones, todos los ingredientes y los valores por ración.
-                    </span>
-                  </label>
-                )}
-                <button className="primary" onClick={addRecipe}>
-                  <Check size={17} /> He revisado y quiero guardar
-                </button>
-              </section>
-              <div className="list">
-                {data.recipes.map((r) => (
-                  <div className="list-row" key={r.id}>
-                    <div>
-                      <strong>{r.name}</strong>
-                      <p>
-                        {r.meal} · {r.calories} kcal por ración
-                      </p>
-                      <label className="field">
-                        Sodio por ración (mg; vacío si se desconoce)
-                        <input
-                          type="number"
-                          min="0"
-                          value={r.sodiumMg ?? ""}
-                          onChange={(e) => {
-                            const value =
-                              e.target.value === ""
-                                ? undefined
-                                : Number(e.target.value);
-                            setData((s) => ({
-                              ...s,
-                              recipes: s.recipes.map((x) =>
-                                x.id === r.id ? { ...x, sodiumMg: value } : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                      <label className="field">
-                        Vitamina D por ración (µg; vacío si se desconoce)
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.1"
-                          value={r.vitaminDMcg ?? ""}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (
-                              raw !== "" &&
-                              (!Number.isFinite(Number(raw)) || Number(raw) < 0)
-                            )
-                              return;
-                            const value = raw === "" ? undefined : Number(raw);
-                            setData((s) => ({
-                              ...s,
-                              recipes: s.recipes.map((x) =>
-                                x.id === r.id
-                                  ? { ...x, vitaminDMcg: value }
-                                  : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                      <label className="field">
-                        Fuente de vitamina D
-                        <input
-                          value={r.vitaminDSource || ""}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setData((s) => ({
-                              ...s,
-                              recipes: s.recipes.map((x) =>
-                                x.id === r.id
-                                  ? { ...x, vitaminDSource: value }
-                                  : x,
-                              ),
-                            }));
-                          }}
-                        />
-                      </label>
-                      <NutritionExtras
-                        recipe={r}
-                        update={(patch) =>
-                          setData((s) => ({
-                            ...s,
-                            recipes: s.recipes.map((x) =>
-                              x.id === r.id ? { ...x, ...patch } : x,
-                            ),
-                          }))
-                        }
-                      />
-                    </div>
-                    <label className="rating">
-                      Preferencia{" "}
-                      <select
-                        value={r.rating}
-                        onChange={(e) =>
-                          setData((s) => ({
-                            ...s,
-                            recipes: s.recipes.map((x) =>
-                              x.id === r.id
-                                ? { ...x, rating: num(e.target.value) }
-                                : x,
-                            ),
-                          }))
-                        }
-                      >
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <option key={n}>{n}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {tab === "Menú" && (
-            <>
-              <div className="eyebrow muted">03 / VUESTRO PLAN</div>
-              <h1 className="page-title">
-                Una quincena <em>para vosotros.</em>
-              </h1>
-              <p className="intro">
-                Revisad la propuesta antes de generar vuestra lista de la
-                compra.
-              </p>
-              <div className="warning">
-                <SlidersHorizontal size={19} />
-                <span>
-                  El optimizador busca cumplir cada objetivo diario con una
-                  tolerancia del 10 %, ajustando las raciones en medios.
-                  Equilibra coste, valoraciones, variedad, sobrantes y menor
-                  sodio; 1.000 mg de sodio suman una penalización de 0,10 € al
-                  cálculo, no al precio de la compra. Solo utiliza recetas con
-                  sodio conocido y no garantiza un límite diario. La OMS
-                  recomienda menos de 2.000 mg de sodio al día para adultos,
-                  contando todos los alimentos. No verifica alergias ni calidad
-                  clínica.
-                </span>
-              </div>
-              <OptimizationSettings
-                options={data.optimizationOptions || {}}
-                update={(patch) =>
-                  setData((s) => ({
-                    ...s,
-                    optimizationOptions: { ...s.optimizationOptions, ...patch },
-                    confirmed: false,
-                  }))
-                }
-              />
-              <ScenarioCompare data={data} />
-              <div className="toolbar">
-                <span>
-                  {ready
-                    ? "Objetivos de ambos perfiles completos"
-                    : "Completad los objetivos de ambos perfiles"}{" "}
-                  · {data.recipes.length} recetas
-                </span>
-                <button className="primary" disabled={busy} onClick={generate}>
-                  {busy ? "Calculando…" : "Generar menú"} <Sparkles size={17} />
-                </button>
-              </div>
-              {data.plan.length === 0 ? (
-                <div className="empty">
-                  <CalendarDays size={28} />
-                  <h2>Vuestra mesa está por preparar.</h2>
-                  <p>
-                    Añadid objetivos, productos y al menos una receta revisada
-                    para cada comida.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <MenuReview
-                    data={data}
-                    busy={busy}
-                    stale={stale}
-                    dirty={dirty}
-                    updateLock={updateLock}
-                  />
-                  {data.leftovers && (
-                    <section className="card">
-                      <h2>Aprovechamiento estimado</h2>
-                      <p className="help">
-                        Se supone que las existencias se usan antes que las
-                        compras. La caducidad se aplica únicamente a las
-                        existencias indicadas; no se conoce la conservación de
-                        los productos nuevos. El sobrante total incluye
-                        existencias que podrían caducar.
-                      </p>
-                      {data.leftovers.map((x) => (
-                        <div className="list-row" key={x.id}>
-                          <div>
-                            <strong>{x.name}</strong>
-                            <p>
-                              En casa: {Math.round(x.stock * 10) / 10} {x.unit}{" "}
-                              · Compra: {Math.round(x.purchased * 10) / 10}{" "}
-                              {x.unit} · Uso: {Math.round(x.used * 10) / 10}{" "}
-                              {x.unit}
-                            </p>
-                            <p>
-                              Sobrante total:{" "}
-                              {Math.round(x.remaining * 10) / 10} {x.unit}
-                              {x.expiredStock > 0
-                                ? ` · De existencias, podrían caducar: ${Math.round(x.expiredStock * 10) / 10} ${x.unit}`
-                                : ""}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </section>
-                  )}
-                  <button
-                    className="primary confirm"
-                    disabled={busy || dirty || stale}
-                    onClick={() => {
-                      setData((s) => ({ ...s, confirmed: true }));
-                      setTab("Compra");
-                    }}
-                  >
-                    Confirmar y ver la compra <ArrowRight size={17} />
-                  </button>
-                </>
-              )}
-            </>
-          )}
-          {tab === "Compra" && (
-            <>
-              <div className="eyebrow muted">VUESTRA LISTA</div>
-              <h1 className="page-title">
-                Todo listo <em>para comprar.</em>
-              </h1>
-              <p className="intro">
-                Una lista consolidada a partir de vuestro menú confirmado.
-              </p>
-              <div className="warning">
-                <CircleAlert size={19} />
-                <span>
-                  Esta lista se guarda en el espacio compartido y se sincroniza
-                  entre las dos cuentas autorizadas.
-                </span>
-              </div>
-              {!data.confirmed || stale || dirty ? (
-                <div className="empty">
-                  <ShoppingBasket size={28} />
-                  <h2>La lista llegará después.</h2>
-                  <p>Generad o recalculad y confirmad primero vuestro menú.</p>
-                  <button className="secondary" onClick={() => setTab("Menú")}>
-                    Ir al menú
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="toolbar">
-                    <span>
-                      {data.shopping.filter((x) => x.checked).length} de{" "}
-                      {data.shopping.length} productos tachados
-                    </span>
-                    <strong>Estimación: {total.toFixed(2)} €</strong>
-                  </div>
-                  <div className="list shopping">
-                    {data.shopping.map((item) => (
-                      <label className="list-row" key={item.id}>
-                        <input
-                          type="checkbox"
-                          checked={item.checked}
-                          onChange={(e) =>
-                            setData((s) => ({
-                              ...s,
-                              shopping: s.shopping.map((x) =>
-                                x.id === item.id
-                                  ? { ...x, checked: e.target.checked }
-                                  : x,
-                              ),
-                            }))
-                          }
-                        />
-                        <div className={item.checked ? "crossed" : ""}>
-                          <strong>{item.name}</strong>
-                          <p>
-                            {item.packages} × {item.size} {item.unit}
-                          </p>
-                        </div>
-                        <b>{(item.price * item.packages).toFixed(2)} €</b>
-                      </label>
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-          {tab === "Biblioteca" && (
-            <Library
-              data={data}
-              review={reviewDraft}
-              approveDocument={approveDocument}
-            />
-          )}
-          <footer>
-            HECHO CON CARIÑO PARA VUESTRA MESA <span>✳</span> &nbsp; 08191
-          </footer>
-        </div>
-      </main>
-    </div>
-    {(importing || persistingUpload) && (
-      <div className="workspace-save-overlay" role="status">
-        {persistingUpload
-          ? "Guardando el borrador compartido…"
-          : importProgress || "Importando el PDF…"}
-      </div>
-    )}
-    </>
+    <DashboardLayout
+      email={email}
+      tab={tab}
+      onTabChange={setTab}
+      data={data}
+      downloadCurrent={downloadCurrent}
+      importing={importing}
+      persistingUpload={persistingUpload}
+      importProgress={importProgress}
+    >
+      <DashboardWorkspaceContent
+        data={data}
+        tab={tab}
+        setTab={setTab}
+        storageStatus={storageStatus}
+        message={message}
+        setMessage={setMessage}
+        legacyCopy={legacyCopy}
+        legacyWarning={legacyWarning}
+        downloadLegacy={downloadLegacy}
+        updateProfile={updateProfile}
+        product={product}
+        setProduct={setProduct}
+        mercadonaInput={mercadonaInput}
+        setMercadonaInput={setMercadonaInput}
+        mercadonaBusy={mercadonaBusy}
+        lookupMercadona={lookupMercadona}
+        addProduct={addProduct}
+        updateProduct={updateProduct}
+        recipe={recipe}
+        setRecipe={setRecipe}
+        importing={importing}
+        importProgress={importProgress}
+        importJobs={importJobs}
+        uploadPdf={uploadPdf}
+        selectedDraft={selectedDraft}
+        setSelectedDraft={setSelectedDraft}
+        selectedPage={selectedPage}
+        suggestions={suggestions}
+        preview={preview}
+        setPreview={setPreview}
+        openingDocument={openingDocument}
+        openDocument={openDocument}
+        setPageStatus={setPageStatus}
+        reviewDraft={reviewDraft}
+        reviewConfirmed={reviewConfirmed}
+        setReviewConfirmed={setReviewConfirmed}
+        addRecipe={addRecipe}
+        updateRecipe={updateRecipe}
+        chooseIngredientProduct={chooseIngredientProduct}
+        retryIngredientSearch={retryIngredientSearch}
+        ready={ready}
+        busy={busy}
+        stale={stale}
+        dirty={dirty}
+        generate={generate}
+        updateOptimizationOptions={updateOptimizationOptions}
+        updateLock={updateLock}
+        confirmPlan={confirmPlan}
+        total={total}
+        checkShoppingItem={checkShoppingItem}
+        approveDocument={approveDocument}
+      />
+    </DashboardLayout>
   );
 }

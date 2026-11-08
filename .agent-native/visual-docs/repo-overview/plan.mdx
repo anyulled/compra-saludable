@@ -1,0 +1,182 @@
+---
+title: "Repo Visual Docs"
+brief: "A local, repo-backed visual documentation workspace for code review and agent handoff."
+kind: "plan"
+localOnly: true
+---
+
+# Repo Visual Docs
+
+A local, repo-backed visual documentation workspace for code review and agent handoff.
+
+This workspace is repo-native: the MDX files are local source files, comments stay beside them in `comments.json`, and the Plan UI reads them through the localhost bridge instead of writing the plan to hosted storage.
+
+Manifest: `../../../agent-native.json`
+
+## Architecture at a glance
+
+Mesa is a Next.js application deployed on Vercel. Supabase Auth authenticates household members; Next.js route handlers enforce application authorization and call Supabase using the user's session. Recipes, profiles, products, plans and shopping state are stored in one revisioned JSONB workspace per household. PDF originals are kept in a private Storage bucket. The optimizer runs in an isolated Node worker and uses HiGHS to solve a mixed integer linear program. Mercadona is an external, unofficial catalog integration behind an adapter.
+
+<Mermaid id="architecture-context" data={{ source: "flowchart LR\n  Users[Household members] -->|Google OAuth| Auth[Supabase Auth]\n  Users -->|HTTPS| Web[Next.js on Vercel]\n  Web --> Routes[Authenticated route handlers]\n  Routes -->|JWT + RLS + CAS| DB[(Supabase Postgres JSONB workspace)]\n  Web -->|Private PDF bucket| Storage[(Supabase Storage)]\n  Routes --> Worker[Node worker]\n  Worker --> Solver[HiGHS mixed integer LP]\n  Routes --> ACL[Mercadona integration ACL]\n  ACL --> Catalog[Unofficial Mercadona catalog]\n  GitHub[GitHub Actions] -->|Checks and migrations| DB\n  GitHub -->|Git integration| Web", caption: "Implemented application and deployment boundaries." }} />
+
+<Mermaid id="workspace-cas-flow" data={{ source: "sequenceDiagram\n  participant Browser\n  participant API as Next.js API\n  participant Auth as Supabase Auth\n  participant DB as Postgres RPC\n  Browser->>API: GET workspace with session cookie\n  API->>Auth: Verify Google identity and allowlist\n  API->>DB: Read household row under RLS\n  DB-->>Browser: JSONB payload and revision\n  Browser->>API: PUT payload and expectedRevision\n  API->>DB: write_household_workspace CAS\n  alt revision matches\n    DB-->>Browser: saved, revision + 1\n  else concurrent write\n    DB-->>Browser: conflict, no overwrite\n  end", caption: "Cross-device edits use revision checks; clients poll when idle." }} />
+
+The detailed written references are [architecture](../../../docs/arquitectura.md) and [linear optimization](../../../docs/optimizacion.md). These explain what is implemented and call out where deployment configuration or source data remains an external prerequisite.
+
+## Visualized Targets
+
+<FileTree id="visualized-targets" title="Visualized targets" entries={[{"path":"app/page.tsx","note":"area; file-tree, diagram, annotated-code"},{"path":"app/dashboard.tsx","note":"area; file-tree, diagram, annotated-code"},{"path":"components/Profiles.tsx","note":"component; wireframe, states, annotated-code"},{"path":"components/Library.tsx","note":"component; wireframe, states, annotated-code"},{"path":"components/MenuReview.tsx","note":"component; wireframe, states, annotated-code"},{"path":"components/ScenarioCompare.tsx","note":"component; wireframe, states, annotated-code"},{"path":"lib/optimizer.cjs","note":"area; file-tree, diagram, annotated-code"},{"path":"lib/optimizer-worker.mjs","note":"area; file-tree, diagram, annotated-code"},{"path":"lib/storage/contract.ts","note":"area; file-tree, diagram, annotated-code"},{"path":"lib/storage/supabase.ts","note":"area; file-tree, diagram, annotated-code"},{"path":"lib/supabase/authorization.ts","note":"area; file-tree, diagram, annotated-code"},{"path":"supabase/migrations/202611080001_private_household_storage.sql","note":"area; file-tree, diagram, annotated-code"},{"path":"scripts/migrate-sqlite-to-supabase.mjs","note":"area; file-tree, diagram, annotated-code"},{"path":".github/workflows/ci.yml","note":"area; file-tree, diagram, annotated-code"},{"path":"docs/operaciones-terminal.md","note":"docs; rich-text, diagram"}]} />
+
+## 1. Page
+
+Source anchors: `app/page.tsx`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 2. Dashboard
+
+Source anchors: `app/dashboard.tsx`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 3. Profiles
+
+Source anchors: `components/Profiles.tsx`
+
+Recommended blocks: `wireframe`, `states`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 4. Library
+
+Source anchors: `components/Library.tsx`
+
+Recommended blocks: `wireframe`, `states`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 5. MenuReview
+
+Source anchors: `components/MenuReview.tsx`
+
+Recommended blocks: `wireframe`, `states`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 6. ScenarioCompare
+
+Source anchors: `components/ScenarioCompare.tsx`
+
+Recommended blocks: `wireframe`, `states`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 7. Optimizer.Cjs
+
+Source anchors: `lib/optimizer.cjs`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 8. Optimizer Worker.Mjs
+
+Source anchors: `lib/optimizer-worker.mjs`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 9. Contract
+
+Source anchors: `lib/storage/contract.ts`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 10. Supabase
+
+Source anchors: `lib/storage/supabase.ts`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 11. Authorization
+
+Source anchors: `lib/supabase/authorization.ts`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 12. 202611080001 Private Household Storage.Sql
+
+Source anchors: `supabase/migrations/202611080001_private_household_storage.sql`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 13. Migrate Sqlite To Supabase.Mjs
+
+Source anchors: `scripts/migrate-sqlite-to-supabase.mjs`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 14. Ci.Yml
+
+Source anchors: `.github/workflows/ci.yml`
+
+Recommended blocks: `file-tree`, `diagram`, `annotated-code`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## 15. Operaciones Terminal
+
+Source anchors: `docs/operaciones-terminal.md`
+
+Recommended blocks: `rich-text`, `diagram`
+
+Freshness policy: `seed`
+
+Use this section as the durable visual contract for the code above. Keep it sparse until the target earns more detail, then add API specs, data models, wireframes, diagrams, or annotated code blocks beside the prose.
+
+## Review And Agent Handoff
+
+Comment on sections, diagrams, specs, or wireframes in the local Plan UI. Agent-targeted comments are the queue for a coding agent to update the repo and then patch these MDX files so the visual docs stay current with code.

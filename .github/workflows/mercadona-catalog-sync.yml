@@ -1,0 +1,39 @@
+name: Weekly Mercadona catalog sync
+
+on:
+  schedule:
+    - cron: "17 8 * * 2"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: mercadona-catalog-sync
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    name: Import latest Hugging Face catalog
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the authenticated production endpoint
+        env:
+          ENDPOINT_OAUTH: ${{ secrets.ENDPOINT_OAUTH }}
+        run: |
+          set -euo pipefail
+          test -n "$ENDPOINT_OAUTH"
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --retry 2 \
+            --retry-delay 2 \
+            --connect-timeout 10 \
+            --max-time 80 \
+            --request POST \
+            --header "Authorization: Bearer ${ENDPOINT_OAUTH}" \
+            --header "Accept: application/json" \
+            "https://compra-saludable.vercel.app/api/cron/mercadona-catalog"

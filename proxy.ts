@@ -51,6 +51,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|images/mesa-saludable.jpg|login|auth).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|images/mesa-saludable.jpg|login|auth|api/cron/mercadona-catalog).*)",
   ],
 };

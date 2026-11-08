@@ -45,6 +45,57 @@ function NumberField({
     </Field>
   );
 }
+
+function EstimateSummary({ estimate }: { estimate: ReturnType<typeof estimateProfile> }) {
+  return <div className="estimate-box">
+    <strong>Estimación orientativa</strong>
+    {estimate.errors.length ? <p>Completa los datos para verla: {estimate.errors.join(" ")}</p> : <>
+      <p>IMC: <strong>{estimate.bmi?.toFixed(1)} kg/m²</strong> · Gasto en reposo: <strong>{estimate.resting} kcal/día</strong></p>
+      <p>Mantenimiento aproximado: <strong>{estimate.maintenance} kcal/día</strong></p>
+      <p>El IMC no describe por sí solo la composición corporal ni determina un objetivo de pérdida de peso.</p>
+    </>}
+  </div>;
+}
+
+function GoalProposal({ profile, index, recommendation, update }: {
+  profile: Profile;
+  index: number;
+  recommendation: ReturnType<typeof recommendGoals>;
+  update: (index: number, patch: Partial<Profile>) => void;
+}) {
+  const proposal = recommendation.proposal;
+  if (!proposal) return <p className="help">{recommendation.reason}</p>;
+  return <div className="estimate-box">
+    <strong>Propuesta orientativa, pendiente de confirmar</strong>
+    <p>{proposal.calories} kcal/día · déficit estimado: {proposal.deficit} kcal/día (10 % del mantenimiento estimado).</p>
+    <p>Proteínas {proposal.protein} g · carbohidratos {proposal.carbs} g · grasas {proposal.fat} g al día.</p>
+    <button type="button" className="secondary" onClick={() => update(index, {
+      calories: proposal.calories,
+      protein: proposal.protein,
+      carbs: proposal.carbs,
+      fat: proposal.fat,
+      medicationRisk: "no",
+      otherSafety: "no",
+      objectiveSource: "suggested",
+      recommendationBasis: recommendationBasis(profile),
+    })}>Confirmar y aplicar propuesta</button>
+  </div>;
+}
+
+function StaleRecommendation({ profile }: { profile: Profile }) {
+  if (profile.objectiveSource !== "suggested" || profile.recommendationBasis === recommendationBasis(profile)) return null;
+  return <div className="warning">El perfil ha cambiado desde que confirmaste la propuesta. Vuelve a confirmarla o introduce objetivos personalizados antes de generar un menú.</div>;
+}
+
+function MacroNotice({ macros }: { macros: ReturnType<typeof macroCheck> }) {
+  if (!macros.complete) return null;
+  const mismatch = Math.abs(macros.difference || 0) > 0.1;
+  return <p className={mismatch ? "warning" : "help"}>
+    Los macronutrientes suman aproximadamente {Math.round(macros.energy || 0)} kcal/día (4 kcal/g para proteínas y carbohidratos; 9 kcal/g para grasas).
+    {mismatch ? " La diferencia con el objetivo energético supera el 10 %; revisa ambos objetivos." : ""}
+  </p>;
+}
+
 export default function Profiles({
   profiles,
   update,
@@ -133,76 +184,10 @@ export default function Profiles({
                 a partir de edad, peso y altura. La actividad es una
                 aproximación; las necesidades reales pueden ser diferentes.
               </p>
-              <div className="estimate-box">
-                <strong>Estimación orientativa</strong>
-                {estimate.errors.length ? (
-                  <p>
-                    Completa los datos para verla: {estimate.errors.join(" ")}
-                  </p>
-                ) : (
-                  <>
-                    <p>
-                      IMC: <strong>{estimate.bmi?.toFixed(1)} kg/m²</strong> ·
-                      Gasto en reposo:{" "}
-                      <strong>{estimate.resting} kcal/día</strong>
-                    </p>
-                    <p>
-                      Mantenimiento aproximado:{" "}
-                      <strong>{estimate.maintenance} kcal/día</strong>
-                    </p>
-                    <p>
-                      El IMC no describe por sí solo la composición corporal ni
-                      determina un objetivo de pérdida de peso.
-                    </p>
-                  </>
-                )}
-              </div>
+              <EstimateSummary estimate={estimate} />
               <div className="subheading">PROPUESTA PARA BAJAR DE PESO</div>
-              {recommendation.proposal ? (
-                <div className="estimate-box">
-                  <strong>Propuesta orientativa, pendiente de confirmar</strong>
-                  <p>
-                    {recommendation.proposal.calories} kcal/día · déficit
-                    estimado: {recommendation.proposal.deficit} kcal/día (10 %
-                    del mantenimiento estimado).
-                  </p>
-                  <p>
-                    Proteínas {recommendation.proposal.protein} g ·
-                    carbohidratos {recommendation.proposal.carbs} g · grasas{" "}
-                    {recommendation.proposal.fat} g al día.
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => {
-                      const x = recommendation.proposal;
-                      if (x)
-                        update(i, {
-                          calories: x.calories,
-                          protein: x.protein,
-                          carbs: x.carbs,
-                          fat: x.fat,
-                          medicationRisk: "no",
-                          otherSafety: "no",
-                          objectiveSource: "suggested",
-                          recommendationBasis: recommendationBasis(p),
-                        });
-                    }}
-                  >
-                    Confirmar y aplicar propuesta
-                  </button>
-                </div>
-              ) : (
-                <p className="help">{recommendation.reason}</p>
-              )}
-              {p.objectiveSource === "suggested" &&
-                p.recommendationBasis !== recommendationBasis(p) && (
-                  <div className="warning">
-                    El perfil ha cambiado desde que confirmaste la propuesta.
-                    Vuelve a confirmarla o introduce objetivos personalizados
-                    antes de generar un menú.
-                  </div>
-                )}
+              <GoalProposal profile={p} index={i} recommendation={recommendation} update={update} />
+              <StaleRecommendation profile={p} />
               <div className="subheading">OBJETIVOS DIARIOS PARA EL MENÚ</div>
               <p className="help">
                 Confirma la propuesta o introduce y ajusta los objetivos. Los
@@ -274,20 +259,7 @@ export default function Profiles({
                   </option>
                 </select>
               </Field>
-              {macros.complete && (
-                <p
-                  className={
-                    Math.abs(macros.difference || 0) > 0.1 ? "warning" : "help"
-                  }
-                >
-                  Los macronutrientes suman aproximadamente{" "}
-                  {Math.round(macros.energy || 0)} kcal/día (4 kcal/g para
-                  proteínas y carbohidratos; 9 kcal/g para grasas).
-                  {Math.abs(macros.difference || 0) > 0.1
-                    ? " La diferencia con el objetivo energético supera el 10 %; revisa ambos objetivos."
-                    : ""}
-                </p>
-              )}
+              <MacroNotice macros={macros} />
               <div className="subheading">VITAMINA D · REFERENCIA EDITABLE</div>
               <p className="help">
                 La EFSA establece para adultos sanos una ingesta adecuada de 15

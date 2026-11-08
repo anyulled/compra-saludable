@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "apps": {
+    "visualize-repo": {
+      "mode": "local-files",
+      "root": ".agent-native/visual-docs",
+      "entry": ".agent-native/visual-docs/repo-overview",
+      "targets": [
+        {
+          "id": "app-page-tsx",
+          "name": "Page",
+          "kind": "area",
+          "include": [
+            "app/page.tsx"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "app-dashboard-tsx",
+          "name": "Dashboard",
+          "kind": "area",
+          "include": [
+            "app/dashboard.tsx"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "components-profiles-tsx",
+          "name": "Profiles",
+          "kind": "component",
+          "include": [
+            "components/Profiles.tsx"
+          ],
+          "blocks": [
+            "wireframe",
+            "states",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "components-library-tsx",
+          "name": "Library",
+          "kind": "component",
+          "include": [
+            "components/Library.tsx"
+          ],
+          "blocks": [
+            "wireframe",
+            "states",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "components-menureview-tsx",
+          "name": "MenuReview",
+          "kind": "component",
+          "include": [
+            "components/MenuReview.tsx"
+          ],
+          "blocks": [
+            "wireframe",
+            "states",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "components-scenariocompare-tsx",
+          "name": "ScenarioCompare",
+          "kind": "component",
+          "include": [
+            "components/ScenarioCompare.tsx"
+          ],
+          "blocks": [
+            "wireframe",
+            "states",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "lib-optimizer-cjs",
+          "name": "Optimizer.Cjs",
+          "kind": "area",
+          "include": [
+            "lib/optimizer.cjs"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "lib-optimizer-worker-mjs",
+          "name": "Optimizer Worker.Mjs",
+          "kind": "area",
+          "include": [
+            "lib/optimizer-worker.mjs"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "lib-storage-contract-ts",
+          "name": "Contract",
+          "kind": "area",
+          "include": [
+            "lib/storage/contract.ts"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "lib-storage-supabase-ts",
+          "name": "Supabase",
+          "kind": "area",
+          "include": [
+            "lib/storage/supabase.ts"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "lib-supabase-authorization-ts",
+          "name": "Authorization",
+          "kind": "area",
+          "include": [
+            "lib/supabase/authorization.ts"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "supabase-migrations-202611080001_private_household_storage-sql",
+          "name": "202611080001 Private Household Storage.Sql",
+          "kind": "area",
+          "include": [
+            "supabase/migrations/202611080001_private_household_storage.sql"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "scripts-migrate-sqlite-to-supabase-mjs",
+          "name": "Migrate Sqlite To Supabase.Mjs",
+          "kind": "area",
+          "include": [
+            "scripts/migrate-sqlite-to-supabase.mjs"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "github-workflows-ci-yml",
+          "name": "Ci.Yml",
+          "kind": "area",
+          "include": [
+            ".github/workflows/ci.yml"
+          ],
+          "blocks": [
+            "file-tree",
+            "diagram",
+            "annotated-code"
+          ],
+          "policy": "seed"
+        },
+        {
+          "id": "docs-operaciones-terminal-md",
+          "name": "Operaciones Terminal",
+          "kind": "docs",
+          "include": [
+            "docs/operaciones-terminal.md"
+          ],
+          "blocks": [
+            "rich-text",
+            "diagram"
+          ],
+          "policy": "seed"
+        }
+      ],
+      "hide": [
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/.agent-native/**"
+      ]
+    }
+  }
+}
