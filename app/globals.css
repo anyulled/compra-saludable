@@ -17,6 +17,102 @@ body {
   font-family: "DM Sans", sans-serif;
   font-size: 14px;
 }
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at top, #eef2e9, var(--cream) 65%);
+}
+.auth-card {
+  width: min(100%, 430px);
+  padding: 46px 42px 38px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 55px #263b3210;
+  text-align: center;
+}
+.auth-brand-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: #315e48;
+  color: #fff;
+  font-size: 22px;
+}
+.auth-eyebrow {
+  color: #829087;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+}
+.auth-card h1 {
+  margin: 12px 0;
+  font-family: "DM Serif Display", serif;
+  font-size: clamp(30px, 8vw, 39px);
+  font-weight: 400;
+  line-height: 1.1;
+}
+.auth-card h1 em {
+  color: #53806a;
+  font-weight: 400;
+}
+.auth-copy {
+  margin: 0 auto 27px;
+  max-width: 310px;
+  color: #788b7f;
+  line-height: 1.7;
+}
+.google-button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px solid #d8ded5;
+  border-radius: 7px;
+  color: #263b32;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+.google-button:hover {
+  background: #fafbf8;
+}
+.auth-error {
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  border-radius: 6px;
+  background: #fff1ed;
+  color: #9d3d2f;
+  line-height: 1.5;
+}
+.auth-footnote {
+  margin: 19px 0 0;
+  color: #99a49b;
+  font-size: 11px;
+}
+.signout-form {
+  display: inline;
+}
+.workspace-save-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #263b3270;
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+  text-align: center;
+  backdrop-filter: blur(2px);
+}
 button,
 input,
 select,
@@ -960,85 +1056,16 @@ textarea {
 }
 .wellness-hero-art {
   position: absolute;
-  right: 8%;
-  top: 28px;
-  width: 280px;
-  height: 280px;
-  display: grid;
-  place-items: center;
+  right: 0;
+  top: 0;
+  width: 40%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 0 14px 14px 0;
 }
-.orbit {
-  position: absolute;
-  border: 1px solid #d5e3d0;
-  border-radius: 50%;
-}
-.orbit-outer {
-  inset: 0;
-}
-.orbit-inner {
-  inset: 25px;
-}
-.center-art {
-  width: 168px;
-  height: 168px;
-  border-radius: 50%;
-  background: #dcead9;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #6f9876;
-  gap: 13px;
-}
-.center-art span {
-  text-align: center;
-  font-size: 8px;
-  letter-spacing: 1.5px;
-  font-weight: 700;
-  line-height: 1.6;
-}
-.art-mark {
-  position: absolute;
-  color: #b6cba8;
-  font-size: 22px;
-}
-.art-mark-one {
-  top: 30px;
-  right: 20px;
-}
-.art-mark-two {
-  bottom: 48px;
-  left: 0;
-}
-.art-note {
-  position: absolute;
-  right: -35px;
-  bottom: 18px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 12px 14px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 9px 25px #728d7120;
-  color: #9cae9e;
-  font-size: 8px;
-  letter-spacing: 0.7px;
-  line-height: 1.6;
-}
-.art-note strong {
-  font-size: 10px;
-  letter-spacing: 0;
-  color: #4e6d56;
-}
-.art-note-icon {
-  display: grid;
-  place-items: center;
-  background: #f7ebe4;
-  color: #c59079;
-  border-radius: 50%;
-  width: 29px;
-  height: 29px;
+.wellness-hero-art img {
+  object-fit: cover;
+  object-position: center;
 }
 .wellness-hero-bottom {
   position: absolute;
@@ -1305,8 +1332,8 @@ textarea {
     grid-template-columns: repeat(2, 1fr);
   }
   .wellness-hero-art {
-    right: 3%;
-    opacity: 0.7;
+    right: 0;
+    width: 34%;
   }
   .wellness-hero-copy {
     max-width: 65%;
@@ -1324,7 +1351,12 @@ textarea {
     font-size: 40px;
   }
   .wellness-hero-art {
-    display: none;
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 190px;
+    margin-top: 24px;
+    border-radius: 10px;
   }
   .wellness-hero-bottom {
     left: 23px;
@@ -1424,3 +1456,7 @@ textarea {
 .extras {
   margin: 20px 0;
 }
+.scenario-table-wrap { overflow-x: auto; margin-top: 1rem; }
+.scenario-table { width: 100%; border-collapse: collapse; text-align: left; }
+.scenario-table th, .scenario-table td { padding: .75rem .5rem; border-bottom: 1px solid #e3e7df; vertical-align: top; }
+.scenario-table th { min-width: 7rem; }

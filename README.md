@@ -1,11 +1,14 @@
 # Mesa
 
-Prototipo local de planificación quincenal para dos personas. Los datos se guardan en SQLite en este equipo: **no hay autenticación, cifrado de la base de datos ni protección adecuada para publicar datos de salud en Internet**. No hay sincronización remota. No desplegarlo públicamente ni introducir información sensible real en esta versión.
+![Mesa para dos con alimentos frescos y una bolsa de compra](public/images/mesa-saludable.jpg)
+
+Planificador quincenal para dos personas, con recetas, objetivos nutricionales y lista de compra. La aplicación utiliza Supabase Auth y un espacio de datos privado compartido; requiere configurar Supabase y Google antes de poder iniciar sesión.
 
 ## Inicio
 
 ```sh
-npm install
+cp .env.example .env.local
+npm ci
 npm run dev
 ```
 
@@ -15,11 +18,11 @@ La estimación de mantenimiento usa Mifflin-St Jeor y el factor de actividad sel
 
 ## Pendiente antes de uso real
 
-Autenticación, base de datos privada, sincronización y recuperación sin conexión; mejora de la extracción estructurada de recetas; búsqueda por nombre y actualización automática de productos de Mercadona; fuentes nutricionales verificadas; restricciones avanzadas de variedad en el menú; restricciones alimentarias seguras; explicaciones más precisas de inviabilidad, variedad y desperdicio; validación clínica. La consulta individual de productos usa la API no oficial de Mercadona, resuelve el almacén para 08191 y requiere revisar el precio y el formato antes de añadir. No rastrea el catálogo. La disponibilidad en tienda física no está verificada.
+Quedan pendientes la sincronización sin conexión, la extracción estructurada de recetas, la búsqueda por nombre y actualización automática del catálogo de Mercadona, y la incorporación de fuentes nutricionales verificadas. La consulta individual utiliza la API no oficial de Mercadona para 08191. Las recetas con valores sintéticos son datos de demostración.
 
 ## Importación de PDF
 
-En Recetas se selecciona un PDF local. El navegador extrae el texto y ejecuta OCR en español en las páginas con poco texto, utilizando recursos servidos por la propia aplicación. Conserva cada página como borrador, incluso cuando no se puede leer. Se puede comparar el texto con el PDF mientras está seleccionado; el original no se guarda. Para cada página, la aplicación sugiere un nombre, líneas de ingredientes, pasos y valores nutricionales cuando los identifica claramente. Estas sugerencias pueden ser incompletas o erróneas; los valores se copian individualmente tras revisión y no se aplican si se detecta una referencia por 100 g o ml. Las raciones y la asociación de todos los ingredientes a productos deben revisarse manualmente antes de aprobar. Las páginas y recetas se guardan en SQLite en este equipo; el PDF original no se guarda.
+En Recetas se selecciona un PDF local de hasta 20 MiB. El navegador extrae el texto y ejecuta OCR en español en las páginas con poco texto. El original se conserva en el bucket privado `household-documents` y puede reabrirse después desde una sesión del hogar; cada página se conserva como borrador para su revisión. Los borradores compartidos tienen un límite de 3 MiB para mantener las solicitudes dentro del tamaño admitido por el despliegue. Si el OCR produce demasiados datos, la importación se rechaza antes de subir el original. Las sugerencias de ingredientes y nutrientes pueden ser incompletas; se confirman durante la revisión.
 
 ## Estados y biblioteca
 
@@ -41,16 +44,16 @@ Cada perfil permite guardar una referencia opcional (µg/día), incluida la inge
 
 En cada perfil se pueden activar límites diarios estrictos de fibra, grasas saturadas, azúcares libres, calcio y vitamina D. No se proponen valores clínicos automáticos: deben revisarse con un profesional. Al activar un límite, solo se consideran recetas que tengan ese dato por ración; el dato desconocido nunca equivale a cero. Los azúcares libres no son lo mismo que el total de azúcares de una etiqueta.
 
-En cada receta se pueden revisar estos valores, su fuente y los grupos que contiene. En Menú se puede fijar un máximo de apariciones de cada receta durante los 14 días y mínimos semanales de platos por grupo. Son restricciones estrictas opcionales; una clasificación puede pertenecer a varios grupos y el recuento no garantiza cantidad mínima de alimentos. Sin límite, el modelo penaliza cada repetición adicional en 0,15 unidades equivalentes a euros del objetivo, junto con coste, sodio y valoración.
+En cada receta se pueden revisar estos valores, su fuente y los grupos que contiene. En Menú se puede fijar un máximo de apariciones de cada receta durante los 14 días y mínimos semanales de platos por grupo. Son restricciones estrictas opcionales; una clasificación puede pertenecer a varios grupos y el recuento no garantiza cantidad mínima de alimentos. El modelo penaliza cada repetición adicional en 0,75 unidades equivalentes a euros del objetivo, junto con coste, sodio y valoración. Para acotar el tiempo se explora primero una selección rotatoria de recetas; el resultado no garantiza el óptimo global de todas las combinaciones posibles.
 
 Si una existencia tiene fecha de caducidad, hay que indicar el inicio del plan. El modelo no la utiliza después de su fecha; los productos comprados se suponen disponibles toda la quincena porque no se conoce su conservación. Se calcula sobrante y posible caducidad de existencias suponiendo que se consumen primero. El objetivo añade penalizaciones equivalentes al 5 % del valor estimado del sobrante y al 20 % del valor estimado de existencias no usadas antes de caducar. Son ponderaciones del prototipo, no costes monetarios reales; pueden entrar en conflicto con precio, sodio o preferencias. El usuario debe revisar los resultados y las condiciones de conservación.
 
 ## Almacenamiento y migración
 
-La aplicación escucha solo en `127.0.0.1` por defecto y guarda el estado de la unidad familiar en `.data/mesa.sqlite`. Se requiere Node.js 22.13 o posterior con `node:sqlite` (en Node 22/24 está marcado como experimental). El archivo se crea con permisos 0600 y la carpeta local con 0700 en sistemas compatibles; no está cifrado. No exponer la aplicación a Internet ni usarla como servicio multiusuario. `MESA_DB_PATH` permite elegir otra ruta local y debe mantenerse fuera de cualquier directorio público o repositorio.
+Se requiere Node.js 22.13 o posterior. Configura en `.env.local` las variables de `.env.example`: URL y clave publicable de Supabase, exactamente dos correos autorizados y el identificador del hogar. En Supabase Auth configura Google como único método de acceso y desactiva email/contraseña, teléfono y otros proveedores; el servidor también exige identidad Google con correo verificado, además de la allowlist. Registra la ruta `/auth/callback`, crea la membresía de las dos cuentas en el hogar y aplica las migraciones antes de arrancar. Los secretos y los datos personales se mantienen fuera de Git.
 
-Al abrir la nueva versión en el navegador anterior, si la base está vacía, se importa automáticamente `mesa-v1`. La copia original en el navegador se conserva. Si SQLite ya contiene datos distintos, no se sobrescribe: la app ofrece descargar la copia anterior para recuperarla. Los datos de otros navegadores u orígenes no se importan por sí solos. Con dos pestañas, los cambios se refrescan aproximadamente cada cuatro segundos; si coinciden ediciones se avisa y se permite descargar los cambios locales antes de cargar la versión guardada.
+El workspace se guarda en Supabase con control de revisión para detectar ediciones simultáneas. Un hogar sin datos queda en estado pendiente de importación; las cuentas autorizadas no pueden crear el primer workspace. El administrador debe sembrar o migrar el estado mediante el script administrativo. La app conserva y permite descargar la copia del navegador mientras espera esa migración. Los navegadores consultan los cambios aproximadamente cada cuatro segundos cuando no hay ediciones pendientes. El adaptador local SQLite y el script de migración se conservan para trasladar instalaciones anteriores.
 
 El botón **Descargar copia** exporta el estado como JSON sin cifrar: guardar el archivo en un lugar seguro. Para una copia física consistente de SQLite usa la API de copia de SQLite; no copies solo el archivo principal mientras la aplicación esté escribiendo, porque puede haber archivos WAL. La importación de copias JSON aún no está implementada.
 
-`lib/storage/contract.ts` define el contrato de lectura y escritura con comparación de revisión atómica y `lib/storage/index.ts` selecciona el adaptador local. Un futuro adaptador SQL o NoSQL deberá conservar esa semántica, añadir autenticación, autorización, cifrado y gestión de conflictos. No hay proveedor remoto configurado ni se transmiten datos a uno.
+`lib/storage/contract.ts` define el contrato de lectura y escritura con comparación de revisión atómica. Las migraciones SQL y políticas de aislamiento de hogares están en `supabase/`. El script `scripts/migrate-sqlite-to-supabase.mjs` hace una simulación por defecto y requiere `MESA_LEGACY_DB_PATH`; para importar necesita además credenciales administrativas configuradas fuera del repositorio.

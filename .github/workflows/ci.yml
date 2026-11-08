@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Enforce 90% global line coverage
+        run: npm run test:coverage
+
+  database-integration:
+    runs-on: ubuntu-latest
+    env:
+      CI_SUPABASE_DIR: ${{ runner.temp }}/mesa-supabase
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 3.0.0
+      - name: Create isolated local project
+        run: |
+          set -euo pipefail
+          mkdir -p "$CI_SUPABASE_DIR"
+          git init --quiet "$CI_SUPABASE_DIR"
+          supabase init --workdir "$CI_SUPABASE_DIR"
+      - name: Start ephemeral Supabase stack
+        run: |
+          set -euo pipefail
+          if ! supabase start --workdir "$CI_SUPABASE_DIR" > "$RUNNER_TEMP/supabase-start.log" 2>&1; then
+            echo "Supabase local stack failed to start; detailed startup log is retained only on the ephemeral runner."
+            exit 1
+          fi
+      - name: Dry-run and apply migrations locally
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CI_SUPABASE_DIR/supabase/migrations"
+          cp "$GITHUB_WORKSPACE"/supabase/migrations/*.sql "$CI_SUPABASE_DIR/supabase/migrations/"
+          cd "$CI_SUPABASE_DIR"
+          supabase db push --dry-run
+          supabase db push
+      - name: Run household isolation and CAS SQL test
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends postgresql-client
+          DB_URL="$(supabase status --workdir "$CI_SUPABASE_DIR" --output env | sed -n 's/^DB_URL="\(.*\)"$/\1/p')"
+          test -n "$DB_URL"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 --file "$GITHUB_WORKSPACE/supabase/tests/household_isolation.sql"
+      - name: Stop ephemeral Supabase stack
+        if: always()
+        run: |
+          if [ -f "$CI_SUPABASE_DIR/supabase/config.toml" ]; then
+            supabase stop --workdir "$CI_SUPABASE_DIR" --no-backup || true
+          fi
+
+  deploy-supabase-migrations:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-test, coverage, database-integration]
+    concurrency:
+      group: supabase-production-migrations
+      cancel-in-progress: false
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 3.0.0
+      - name: Initialize local CLI config
+        run: supabase init
+      - name: Review and apply remote migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$SUPABASE_DB_PASSWORD"
+          test -n "$SUPABASE_PROJECT_ID"
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+          supabase db push --dry-run --remote
+          supabase db push --yes --skip-vault --remote

@@ -71,6 +71,8 @@ export type RecipeDraft = {
   page: number;
   text: string;
   documentId?: string;
+  storedDocumentId?: string;
+  documentPath?: string;
   status?: "pending" | "reviewing" | "reviewed" | "discarded";
   method?: "text" | "ocr" | "unreadable";
 };
@@ -123,6 +125,8 @@ export const emptyProfile = (name: string): Profile => ({
   weight: 0,
   sex: "",
   activity: 0,
+  medicationRisk: "no",
+  otherSafety: "no",
   calories: 0,
   protein: 0,
   carbs: 0,

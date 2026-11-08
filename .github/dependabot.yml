@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      next-react:
+        patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
+        update-types: [patch, minor]
+      supabase:
+        patterns: ["@supabase/*"]
+        update-types: [patch, minor]
+      pdf-ocr:
+        patterns: ["pdfjs-dist", "tesseract.js", "@tesseract.js-data/*"]
+        update-types: [patch, minor]
+      node-types-and-tools:
+        patterns: ["@types/node", "typescript", "highs", "lucide-react"]
+        update-types: [patch, minor]
+      npm-major:
+        patterns: ["*"]
+        update-types: [major]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -1,9 +1,13 @@
 node_modules
 .next
+coverage
 .env*
+!.env.example
 *.tsbuildinfo
 
 .data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.vercel
+supabase/.temp/

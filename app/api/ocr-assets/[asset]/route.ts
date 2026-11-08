@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { NextResponse } from "next/server";
+import { requireAuthorizedUser } from "../../../../lib/supabase/server";
 export const runtime = "nodejs";
 const files: Record<string, [string, string]> = {
   "worker.min.js": [
@@ -28,6 +30,8 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ asset: string }> },
 ) {
+  if (!(await requireAuthorizedUser()))
+    return NextResponse.json({ error: "Se requiere una sesión autorizada." }, { status: 401 });
   const { asset } = await params;
   const entry = files[asset];
   if (!entry || !Object.hasOwn(files, asset))

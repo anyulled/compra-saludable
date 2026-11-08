@@ -1,12 +1,26 @@
 import type { RecipeDraft } from "./types";
 
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+export async function validatePdfFile(file: File) {
+  if (!file.size || file.size > MAX_PDF_BYTES)
+    throw new Error("El PDF debe tener contenido y no superar 20 MiB.");
+  if (!file.name.toLowerCase().endsWith(".pdf"))
+    throw new Error("Selecciona un archivo PDF con extensión .pdf.");
+  const prefix = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  const signature = [0x25, 0x50, 0x44, 0x46, 0x2d];
+  const hasPdfHeader = prefix.some((_, offset) =>
+    signature.every((byte, index) => prefix[offset + index] === byte),
+  );
+  if (!hasPdfHeader) throw new Error("El archivo no contiene una cabecera PDF válida.");
+}
+
 /** Read uploaded bytes locally; retain every page, even if OCR cannot read it. */
 export async function importPdf(
   file: File,
   progress: (message: string) => void,
 ): Promise<RecipeDraft[]> {
-  if (file.size > 50 * 1024 * 1024)
-    throw new Error("El PDF supera el límite de 50 MB.");
+  await validatePdfFile(file);
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/api/pdf-worker";
   const task = pdfjs.getDocument({

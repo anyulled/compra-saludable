@@ -2,8 +2,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { initial, type State } from "./types";
 import { isWorkspace } from "./storage/validate.mjs";
+import {
+  fitsWorkspaceLimit,
+  MAX_WORKSPACE_BYTES,
+  WorkspaceWriteUncertainError,
+  canStartWorkspaceWrite,
+} from "./workspace-limits.mjs";
+import { reconcileWorkspaceWrite } from "./workspace-reconcile.mjs";
 
-type StorageStatus = "loading" | "ready" | "saving" | "conflict" | "error";
+type StorageStatus = "loading" | "setup" | "ready" | "saving" | "conflict" | "error";
 const LEGACY_KEY = "mesa-v1";
 const IMPORTED_KEY = "mesa-sqlite-imported-v1";
 const encode = (value: State) => JSON.stringify(value);
@@ -13,6 +20,7 @@ export function useWorkspace() {
   const [status, setStatus] = useState<StorageStatus>("loading");
   const [error, setError] = useState("");
   const [legacyCopy, setLegacyCopy] = useState<string | null>(null);
+  const [legacySeed, setLegacySeed] = useState<State | null>(null);
   const [legacyWarning, setLegacyWarning] = useState("");
   const revision = useRef(0);
   const acknowledged = useRef("");
@@ -28,12 +36,14 @@ export function useWorkspace() {
     const response = await fetch("/api/workspace", { cache: "no-store" });
     if (!response.ok)
       throw Error(
-        "No se pudo acceder a SQLite. Comprueba que la aplicación está en marcha.",
+        "No se pudo acceder al espacio compartido. Comprueba la conexión e inténtalo de nuevo.",
       );
     return (await response.json()) as { state: State | null; revision: number };
   }, []);
   const save = useCallback(
     async (snapshot: string, expectedRevision: number) => {
+      if (new TextEncoder().encode(snapshot).byteLength > MAX_WORKSPACE_BYTES)
+        throw Error("El espacio compartido supera el límite de 3 MiB.");
       const response = await fetch("/api/workspace", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -63,20 +73,20 @@ export function useWorkspace() {
         if (response.status === 409) {
           blocked.current = true;
           setError(
-            "Otra pestaña guardó cambios. Descarga tus cambios o carga la versión de SQLite.",
+            "Otra persona guardó cambios. Descarga tus cambios o carga la versión compartida.",
           );
           setSafeStatus("conflict");
           return;
         }
         if (!response.ok)
-          throw Error(body.error || "No se pudo guardar en SQLite.");
+          throw Error(body.error || "No se pudo guardar el espacio compartido.");
         revision.current = body.revision;
         acknowledged.current = snapshot;
         setSafeStatus("ready");
       } catch (e) {
         blocked.current = true;
         setError(
-          e instanceof Error ? e.message : "No se pudo guardar en SQLite.",
+          e instanceof Error ? e.message : "No se pudo guardar el espacio compartido.",
         );
         setSafeStatus("error");
       } finally {
@@ -100,7 +110,7 @@ export function useWorkspace() {
           legacy = localStorage.getItem(LEGACY_KEY);
         } catch {
           setLegacyWarning(
-            "No se pudo comprobar si existe una copia anterior del navegador. SQLite sigue disponible.",
+            "No se pudo comprobar si existe una copia anterior del navegador. El espacio compartido sigue disponible.",
           );
         }
         let old: State | null = null;
@@ -118,19 +128,17 @@ export function useWorkspace() {
         }
         let remote = await read();
         if (!active.current) return;
-        if (remote.state === null && old) {
-          const result = await save(encode(old), 0);
-          if (result.response.ok) {
-            remote = { state: old, revision: result.body.revision };
-            try {
-              localStorage.setItem(IMPORTED_KEY, "1");
-            } catch {}
-          } else if (result.response.status === 409) {
-            remote = await read();
-          } else
-            throw Error("No se pudo importar la copia del navegador a SQLite.");
+        if (remote.state === null) {
+          const preview = old || initial;
+          revision.current = remote.revision;
+          acknowledged.current = "";
+          current.current = encode(preview);
+          setLegacySeed(old);
+          setData(preview);
+          setStatus("setup");
+          return;
         }
-        const chosen = remote.state || initial;
+        const chosen = remote.state;
         if (!isWorkspace(chosen))
           throw Error(
             "La base de datos contiene datos que esta versión no reconoce.",
@@ -162,7 +170,7 @@ export function useWorkspace() {
     };
   }, [read, save]);
   useEffect(() => {
-    if (status === "loading" || !acknowledged.current) return;
+    if (status === "loading" || status === "setup" || !acknowledged.current) return;
     current.current = encode(data);
     if (current.current === acknowledged.current) return;
     if (timer.current) clearTimeout(timer.current);
@@ -201,7 +209,7 @@ export function useWorkspace() {
       } catch (e) {
         if (active.current) {
           blocked.current = true;
-          setError(e instanceof Error ? e.message : "No se pudo leer SQLite.");
+          setError(e instanceof Error ? e.message : "No se pudo leer el espacio compartido.");
           setStatus("error");
         }
       }
@@ -248,10 +256,75 @@ export function useWorkspace() {
       );
       setStatus("conflict");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo acceder a SQLite.");
+      setError(e instanceof Error ? e.message : "No se pudo acceder al espacio compartido.");
       setStatus("error");
     }
   }, [read, flush]);
+  const persistWorkspace = useCallback(
+    async (next: State) => {
+      if (!canStartWorkspaceWrite({
+        status,
+        running: running.current,
+        blocked: blocked.current,
+        current: current.current,
+        acknowledged: acknowledged.current,
+      }))
+        throw Error("Hay cambios pendientes. Espera a que se guarden antes de importar otro PDF.");
+      if (!isWorkspace(next) || !fitsWorkspaceLimit(next))
+        throw Error("Los borradores superarían el límite de 3 MiB del espacio compartido.");
+      const snapshot = encode(next);
+      const base = JSON.parse(acknowledged.current) as State;
+      running.current = true;
+      setSafeStatus("saving");
+      try {
+        const { response, body } = await save(snapshot, revision.current);
+        if (response.status === 409) {
+          blocked.current = true;
+          setError("Otra persona guardó cambios. Carga la versión compartida antes de importar.");
+          setSafeStatus("conflict");
+          throw Error("El espacio compartido cambió. Se ha cancelado la importación.");
+        }
+        if (!response.ok) throw Error(body.error || "No se pudo guardar el borrador.");
+        revision.current = body.revision;
+        acknowledged.current = snapshot;
+        setData((latest) => reconcileWorkspaceWrite(base, latest, next));
+        setSafeStatus("ready");
+      } catch (e) {
+        let confirmed = false;
+        try {
+          const remote = await read();
+          confirmed = true;
+          if (remote.state && encode(remote.state) === snapshot) {
+            revision.current = remote.revision;
+            acknowledged.current = snapshot;
+            blocked.current = false;
+            setError("");
+            setData((latest) => reconcileWorkspaceWrite(base, latest, next));
+            setSafeStatus("ready");
+            return;
+          }
+        } catch {}
+        if (!confirmed) {
+          const uncertain = new WorkspaceWriteUncertainError(
+            "No se pudo confirmar el guardado. El PDF permanece en el almacenamiento privado; recarga el espacio para comprobar si el borrador llegó a guardarse.",
+          );
+          blocked.current = true;
+          setError(uncertain.message);
+          setSafeStatus("error");
+          throw uncertain;
+        }
+        if (!blocked.current) {
+          blocked.current = true;
+          setError(e instanceof Error ? e.message : "No se pudo guardar el borrador.");
+          setSafeStatus("error");
+        }
+        throw e;
+      } finally {
+        running.current = false;
+      }
+    },
+    [read, save, setSafeStatus, status],
+  );
   const download = useCallback((content: string, filename: string) => {
     const url = URL.createObjectURL(
       new Blob([content], { type: "application/json" }),
@@ -268,8 +341,12 @@ export function useWorkspace() {
     status,
     error,
     legacyCopy,
+    legacySeed,
     legacyWarning,
     retry,
+    persistWorkspace,
+    downloadLegacySeed: () =>
+      legacySeed && download(JSON.stringify(legacySeed), "mesa-copia-navegador.json"),
     downloadCurrent: () =>
       download(current.current, "mesa-cambios-pendientes.json"),
     downloadLegacy: () =>

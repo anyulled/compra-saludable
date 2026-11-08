@@ -1,14 +1,13 @@
 "use client";
+import Image from "next/image";
 import {
   Activity,
   ArrowRight,
   BookOpen,
   Calculator,
   Check,
-  CircleAlert,
   Droplets,
   Heart,
-  Leaf,
   Scale,
   ShoppingBasket,
   Sparkles,
@@ -115,28 +114,14 @@ export default function WellnessHome({ navigate }: Props) {
             </a>
           </div>
         </div>
-        <div className="wellness-hero-art" aria-hidden="true">
-          <div className="orbit orbit-outer" />
-          <div className="orbit orbit-inner" />
-          <div className="center-art">
-            <Leaf size={60} strokeWidth={1.2} />
-            <span>
-              COMER BIEN
-              <br />A VUESTRO RITMO
-            </span>
-          </div>
-          <span className="art-mark art-mark-one">✳</span>
-          <span className="art-mark art-mark-two">✳</span>
-          <div className="art-note">
-            <span className="art-note-icon">
-              <Heart size={15} />
-            </span>
-            <span>
-              PEQUEÑAS DECISIONES
-              <br />
-              <strong>que suman cada día</strong>
-            </span>
-          </div>
+        <div className="wellness-hero-art">
+          <Image
+            src="/images/mesa-saludable.jpg"
+            alt="Una mesa para dos con verduras, legumbres y pan integral"
+            fill
+            sizes="(max-width: 650px) 100vw, (max-width: 1050px) 35vw, 40vw"
+            preload
+          />
         </div>
         <div className="wellness-hero-bottom">
           <span>01 — PENSADO PARA DOS</span>
@@ -174,14 +159,6 @@ export default function WellnessHome({ navigate }: Props) {
               </article>
             );
           })}
-        </div>
-        <div className="care-note">
-          <CircleAlert size={18} />
-          <p>
-            Esta información es general. La aplicación no diagnostica ni
-            sustituye una valoración profesional; especialmente con hígado graso
-            o resistencia a la insulina, revisad los objetivos antes de usarlos.
-          </p>
         </div>
       </section>
       <section className="wellness-section">
@@ -238,7 +215,7 @@ export default function WellnessHome({ navigate }: Props) {
             <h3>Una compra más sencilla</h3>
             <p>
               Se suman ingredientes y se calculan envases teniendo en cuenta la
-              despensa. Por ahora, la lista se guarda en SQLite en este equipo.
+              despensa. La lista se guarda en el espacio compartido.
             </p>
             <button onClick={() => navigate("Recetas")}>
               Preparar recetas <ArrowRight size={14} />

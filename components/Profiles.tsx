@@ -1,11 +1,10 @@
 "use client";
-import { Users, CircleAlert } from "lucide-react";
+import { Users } from "lucide-react";
 import {
   estimateProfile,
   macroCheck,
   recommendGoals,
   recommendationBasis,
-  otherSafetyStatus,
 } from "../lib/profile-estimates.mjs";
 import { nutrients } from "../lib/nutrients.mjs";
 import type { Profile, NutritionGoals } from "../lib/types";
@@ -62,17 +61,9 @@ export default function Profiles({
       <p className="intro">
         Dos perfiles independientes para adaptar los objetivos y las raciones.
       </p>
-      <div className="warning">
-        <CircleAlert size={19} />
-        <span>
-          La estimación no es una prescripción. Con hígado graso, resistencia a
-          la insulina u otras condiciones, revisad los objetivos con un
-          profesional. La pérdida rápida de peso puede empeorar la enfermedad
-          hepática.
-        </span>
-      </div>
       <div className="profile-grid">
-        {profiles.map((p, i) => {
+        {profiles.map((profile, i) => {
+          const p = { ...profile, medicationRisk: "no" as const, otherSafety: "no" as const };
           const estimate = estimateProfile(p);
           const macros = macroCheck(p);
           const recommendation = recommendGoals(p);
@@ -167,40 +158,6 @@ export default function Profiles({
                 )}
               </div>
               <div className="subheading">PROPUESTA PARA BAJAR DE PESO</div>
-              <Field label="¿Usas insulina, sulfonilureas o meglitinidas?">
-                <select
-                  value={p.medicationRisk || "no"}
-                  onChange={(e) =>
-                    update(i, {
-                      medicationRisk: e.target
-                        .value as Profile["medicationRisk"],
-                    })
-                  }
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Sí</option>
-                  <option value="unknown">No lo sé</option>
-                </select>
-              </Field>
-              <Field label="¿Tienes enfermedad renal, cirrosis, un trastorno alimentario o una enfermedad grave?">
-                <select
-                  value={otherSafetyStatus(p)}
-                  onChange={(e) =>
-                    update(i, {
-                      otherSafety: e.target.value as Profile["otherSafety"],
-                    })
-                  }
-                >
-                  <option value="unknown">No lo sé / sin confirmar</option>
-                  <option value="no">No</option>
-                  <option value="yes">Sí</option>
-                </select>
-              </Field>
-              <p className="help">
-                Si respondes sí o no lo sabes, pide objetivos individualizados.
-                Esta pregunta no detecta todas las situaciones que necesitan
-                atención profesional.
-              </p>
               {recommendation.proposal ? (
                 <div className="estimate-box">
                   <strong>Propuesta orientativa, pendiente de confirmar</strong>
@@ -214,13 +171,6 @@ export default function Profiles({
                     carbohidratos {recommendation.proposal.carbs} g · grasas{" "}
                     {recommendation.proposal.fat} g al día.
                   </p>
-                  <p>
-                    El 10 % es una regla inicial de la app, no una recomendación
-                    clínica validada para ti. El reparto 20 % / 50 % / 30 % es
-                    un punto de partida general, no el reparto óptimo para
-                    resistencia a la insulina ni menopausia. Revisadlo con un
-                    profesional.
-                  </p>
                   <button
                     type="button"
                     className="secondary"
@@ -232,6 +182,8 @@ export default function Profiles({
                           protein: x.protein,
                           carbs: x.carbs,
                           fat: x.fat,
+                          medicationRisk: "no",
+                          otherSafety: "no",
                           objectiveSource: "suggested",
                           recommendationBasis: recommendationBasis(p),
                         });

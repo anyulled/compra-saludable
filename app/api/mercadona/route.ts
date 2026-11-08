@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { lookup } from "../../../lib/mercadona.cjs";
+import { requireAuthorizedUser } from "../../../lib/supabase/server";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
+  if (!(await requireAuthorizedUser()))
+    return NextResponse.json({ error: "Se requiere una sesión autorizada." }, { status: 401 });
   try {
     const body = await request.json();
     if (typeof body.product !== "string" || body.product.length > 500)
