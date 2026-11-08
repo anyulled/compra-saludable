@@ -15,6 +15,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+      - name: Set up Go for workflow linting
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+      - name: Install actionlint
+        run: 'go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12'
+      - name: Validate workflow syntax and expressions
+        run: '"$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml'
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -44,8 +52,6 @@ jobs:
 
   database-integration:
     runs-on: ubuntu-latest
-    env:
-      CI_SUPABASE_DIR: ${{ runner.temp }}/mesa-supabase
     timeout-minutes: 30
     steps:
       - name: Check out source
@@ -54,6 +60,8 @@ jobs:
         uses: supabase/setup-cli@v3
         with:
           version: 3.0.0
+      - name: Set ephemeral Supabase directory
+        run: echo "CI_SUPABASE_DIR=$RUNNER_TEMP/mesa-supabase" >> "$GITHUB_ENV"
       - name: Create isolated local project
         run: |
           set -euo pipefail
