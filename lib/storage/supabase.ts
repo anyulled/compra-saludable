@@ -25,7 +25,7 @@ export function createSupabaseWorkspaceStore(
   householdId: string,
 ): WorkspaceStore {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(householdId)) {
-    throw new Error("MESA_HOUSEHOLD_ID debe ser un UUID válido.");
+    throw new Error("El hogar debe identificarse con un UUID válido.");
   }
   const db = client as SupabaseClientLike;
 

@@ -2,6 +2,28 @@
 import { nutrients } from "../lib/nutrients.mjs";
 import { daySummary } from "../lib/plan-review.mjs";
 import type { State, PlanLock, Meal } from "../lib/types";
+type ExtraNutrient = (typeof nutrients)[number];
+type DailySummary = NonNullable<ReturnType<typeof daySummary>>;
+
+function ExtraNutrientLine({
+  nutrient,
+  profile,
+  summary,
+}: {
+  nutrient: ExtraNutrient;
+  profile: State["profiles"][number];
+  summary: DailySummary;
+}) {
+  const value = summary.extras[nutrient.key];
+  return (
+    <span className="extra-line" key={nutrient.key}>
+      <br />
+      {nutrient.label}: {value.known === value.total
+        ? `${value.amount.toFixed(1)} ${nutrient.unit}`
+        : `datos de ${value.known}/${value.total} comidas`} · {nutrient.direction === "min" ? "mín." : "máx."} {profile.nutritionGoals?.[nutrient.goal as keyof NonNullable<typeof profile.nutritionGoals>]} {nutrient.unit}/día
+    </span>
+  );
+}
 type Props = {
   data: State;
   busy: boolean;
@@ -123,35 +145,10 @@ export default function MenuReview({
                           ? ` · referencia ${profile.vitaminDGoalMcg} µg/día`
                           : ""}
                         {nutrients
-                          .filter(
-                            (n) =>
-                              profile.nutritionGoals?.[
-                                n.goal as keyof NonNullable<
-                                  typeof profile.nutritionGoals
-                                >
-                              ] != null,
-                          )
-                          .map((n) => {
-                            const v = sum.extras[n.key];
-                            return (
-                              <span className="extra-line" key={n.key}>
-                                <br />
-                                {n.label}:{" "}
-                                {v.known === v.total
-                                  ? `${v.amount.toFixed(1)} ${n.unit}`
-                                  : `datos de ${v.known}/${v.total} comidas`}{" "}
-                                · {n.direction === "min" ? "mín." : "máx."}{" "}
-                                {
-                                  profile.nutritionGoals?.[
-                                    n.goal as keyof NonNullable<
-                                      typeof profile.nutritionGoals
-                                    >
-                                  ]
-                                }{" "}
-                                {n.unit}/día
-                              </span>
-                            );
-                          })}
+                          .filter((nutrient) => profile.nutritionGoals?.[nutrient.goal as keyof NonNullable<typeof profile.nutritionGoals>] != null)
+                          .map((nutrient) => (
+                            <ExtraNutrientLine key={nutrient.key} nutrient={nutrient} profile={profile} summary={sum} />
+                          ))}
                       </p>
                     ) : (
                       <p>Datos incompletos; recalcula el menú.</p>

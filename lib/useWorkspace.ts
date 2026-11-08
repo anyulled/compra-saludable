@@ -15,6 +15,191 @@ const LEGACY_KEY = "mesa-v1";
 const IMPORTED_KEY = "mesa-sqlite-imported-v1";
 const encode = (value: State) => JSON.stringify(value);
 
+function canFlush(active: boolean, running: boolean, blocked: boolean, acknowledged: string, current: string) {
+  return active && !running && !blocked && Boolean(acknowledged) && current !== acknowledged;
+}
+
+function hasPendingEdits(active: boolean, blocked: boolean, current: string, acknowledged: string) {
+  return active && !blocked && current !== acknowledged;
+}
+
+function describeSaveError(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+async function flushSnapshot(
+  snapshot: string,
+  expectedRevision: number,
+  save: (snapshot: string, revision: number) => Promise<{ response: Response; body: any }>,
+  revision: { current: number },
+  acknowledged: { current: string },
+  blocked: { current: boolean },
+  setError: (value: string) => void,
+  setSafeStatus: (value: StorageStatus) => void,
+) {
+  const { response, body } = await save(snapshot, expectedRevision);
+  if (response.status === 409) {
+    blocked.current = true;
+    setError("Otra persona guardó cambios. Descarga tus cambios o carga la versión compartida.");
+    setSafeStatus("conflict");
+    return;
+  }
+  if (!response.ok) throw Error(body.error || "No se pudo guardar el espacio compartido.");
+  revision.current = body.revision;
+  acknowledged.current = snapshot;
+  setSafeStatus("ready");
+}
+
+function handleFlushFailure(error: unknown, blocked: { current: boolean }, setError: (value: string) => void, setSafeStatus: (value: StorageStatus) => void) {
+  blocked.current = true;
+  setError(describeSaveError(error, "No se pudo guardar el espacio compartido."));
+  setSafeStatus("error");
+}
+
+export function warnAboutPendingEdits(event: BeforeUnloadEvent, current: string, acknowledged: string, running: boolean) {
+  if (current !== acknowledged || running) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+}
+
+function readLegacyWorkspace(storage: Storage, setCopy: (copy: string) => void, setWarning: (warning: string) => void) {
+  let legacy: string | null = null;
+  try {
+    legacy = storage.getItem(LEGACY_KEY);
+  } catch {
+    setWarning("No se pudo comprobar si existe una copia anterior del navegador. El espacio compartido sigue disponible.");
+  }
+  if (!legacy) return { legacy, old: null as State | null };
+  try {
+    const old = JSON.parse(legacy) as State;
+    if (!isWorkspace(old)) throw Error();
+    return { legacy, old };
+  } catch {
+    setCopy(legacy);
+    setWarning("La copia anterior del navegador no tiene un formato reconocido; descárgala para conservarla.");
+    return { legacy, old: null as State | null };
+  }
+}
+
+function shouldExposeLegacyCopy(old: State | null, remote: State, storage: Storage) {
+  if (!old || encode(old) === encode(remote)) return false;
+  try {
+    return storage.getItem(IMPORTED_KEY) !== "1";
+  } catch {
+    return true;
+  }
+}
+
+function applyInitialWorkspace(remote: { state: State | null; revision: number }, legacy: { legacy: string | null; old: State | null }, active: boolean, refs: { revision: { current: number }; acknowledged: { current: string }; current: { current: string } }, setters: { setData: (state: State) => void; setStatus: (status: StorageStatus) => void; setLegacyCopy: (copy: string | null) => void; setLegacySeed: (state: State | null) => void }) {
+  if (!active) return;
+  if (!remote.state) {
+    const preview = legacy.old || initial;
+    refs.revision.current = remote.revision;
+    refs.acknowledged.current = "";
+    refs.current.current = encode(preview);
+    setters.setLegacySeed(legacy.old);
+    setters.setData(preview);
+    setters.setStatus("setup");
+    return;
+  }
+  if (!isWorkspace(remote.state)) throw Error("La base de datos contiene datos que esta versión no reconoce.");
+  if (shouldExposeLegacyCopy(legacy.old, remote.state, localStorage)) setters.setLegacyCopy(legacy.legacy);
+  refs.revision.current = remote.revision;
+  refs.acknowledged.current = encode(remote.state);
+  refs.current.current = refs.acknowledged.current;
+  setters.setData(remote.state);
+  setters.setStatus("ready");
+}
+
+type WorkspaceRemote = { state: State | null; revision: number };
+type Mutable<T> = { current: T };
+
+function refreshIsPaused(running: Mutable<boolean>, blocked: Mutable<boolean>, current: Mutable<string>, acknowledged: Mutable<string>) {
+  return running.current || blocked.current || current.current !== acknowledged.current;
+}
+
+function remoteNeedsRefresh(remote: WorkspaceRemote, revision: Mutable<number>) {
+  return Boolean(remote.state) && remote.revision !== revision.current;
+}
+
+function recordRemoteWorkspace(remote: WorkspaceRemote, revision: Mutable<number>, acknowledged: Mutable<string>, current: Mutable<string>, setData: (state: State) => void) {
+  if (!remote.state) return;
+  if (!isWorkspace(remote.state)) throw Error("La base de datos contiene datos no reconocidos.");
+  revision.current = remote.revision;
+  acknowledged.current = encode(remote.state);
+  current.current = acknowledged.current;
+  setData(remote.state);
+}
+
+async function refreshWorkspace(read: () => Promise<WorkspaceRemote>, active: Mutable<boolean>, running: Mutable<boolean>, blocked: Mutable<boolean>, current: Mutable<string>, acknowledged: Mutable<string>, revision: Mutable<number>, setData: (state: State) => void, setError: (value: string) => void, setStatus: (status: StorageStatus) => void) {
+  if (refreshIsPaused(running, blocked, current, acknowledged)) return;
+  try {
+    const remote = await read();
+    if (!active.current || refreshIsPaused(running, blocked, current, acknowledged)) return;
+    if (remoteNeedsRefresh(remote, revision)) recordRemoteWorkspace(remote, revision, acknowledged, current, setData);
+  } catch (error) {
+    if (!active.current) return;
+    blocked.current = true;
+    setError(error instanceof Error ? error.message : "No se pudo leer el espacio compartido.");
+    setStatus("error");
+  }
+}
+
+type WorkspaceWriteContext = {
+  next: State;
+  base: State;
+  snapshot: string;
+  revision: Mutable<number>;
+  acknowledged: Mutable<string>;
+  blocked: Mutable<boolean>;
+  setData: (update: (latest: State) => State) => void;
+  setError: (value: string) => void;
+  setStatus: (status: StorageStatus) => void;
+};
+
+function commitWorkspaceWrite(context: WorkspaceWriteContext, recovered = false) {
+  context.acknowledged.current = context.snapshot;
+  if (recovered) {
+    context.blocked.current = false;
+    context.setError("");
+  }
+  context.setData((latest) => reconcileWorkspaceWrite(context.base, latest, context.next));
+  context.setStatus("ready");
+}
+
+async function verifyWorkspaceWrite(read: () => Promise<WorkspaceRemote>) {
+  try {
+    const remote = await read();
+    return { confirmed: true, remote };
+  } catch {
+    return { confirmed: false, remote: null };
+  }
+}
+
+async function recoverWorkspaceWrite(error: unknown, read: () => Promise<WorkspaceRemote>, context: WorkspaceWriteContext) {
+  const verification = await verifyWorkspaceWrite(read);
+  const remote = verification.remote;
+  if (remote?.state && encode(remote.state) === context.snapshot) {
+    context.revision.current = remote.revision;
+    commitWorkspaceWrite(context, true);
+    return true;
+  }
+  if (!verification.confirmed) {
+    const uncertain = new WorkspaceWriteUncertainError("No se pudo confirmar el guardado. El PDF permanece en el almacenamiento privado; recarga el espacio para comprobar si el borrador llegó a guardarse.");
+    context.blocked.current = true;
+    context.setError(uncertain.message);
+    context.setStatus("error");
+    throw uncertain;
+  }
+  if (!context.blocked.current) {
+    context.blocked.current = true;
+    context.setError(describeSaveError(error, "No se pudo guardar el borrador."));
+    context.setStatus("error");
+  }
+  return false;
+}
+
 export function useWorkspace() {
   const [data, setData] = useState<State>(initial);
   const [status, setStatus] = useState<StorageStatus>("loading");
@@ -56,46 +241,18 @@ export function useWorkspace() {
   );
   const flush = useCallback(
     async function flushLatest() {
-      if (
-        !active.current ||
-        running.current ||
-        blocked.current ||
-        !acknowledged.current ||
-        current.current === acknowledged.current
-      )
-        return;
+      if (!canFlush(active.current, running.current, blocked.current, acknowledged.current, current.current)) return;
       running.current = true;
       setSafeStatus("saving");
       const snapshot = current.current;
       const expected = revision.current;
       try {
-        const { response, body } = await save(snapshot, expected);
-        if (response.status === 409) {
-          blocked.current = true;
-          setError(
-            "Otra persona guardó cambios. Descarga tus cambios o carga la versión compartida.",
-          );
-          setSafeStatus("conflict");
-          return;
-        }
-        if (!response.ok)
-          throw Error(body.error || "No se pudo guardar el espacio compartido.");
-        revision.current = body.revision;
-        acknowledged.current = snapshot;
-        setSafeStatus("ready");
+        await flushSnapshot(snapshot, expected, save, revision, acknowledged, blocked, setError, setSafeStatus);
       } catch (e) {
-        blocked.current = true;
-        setError(
-          e instanceof Error ? e.message : "No se pudo guardar el espacio compartido.",
-        );
-        setSafeStatus("error");
+        handleFlushFailure(e, blocked, setError, setSafeStatus);
       } finally {
         running.current = false;
-        if (
-          active.current &&
-          !blocked.current &&
-          current.current !== acknowledged.current
-        )
+        if (hasPendingEdits(active.current, blocked.current, current.current, acknowledged.current))
           void flushLatest();
       }
     },
@@ -105,56 +262,9 @@ export function useWorkspace() {
     active.current = true;
     (async () => {
       try {
-        let legacy: string | null = null;
-        try {
-          legacy = localStorage.getItem(LEGACY_KEY);
-        } catch {
-          setLegacyWarning(
-            "No se pudo comprobar si existe una copia anterior del navegador. El espacio compartido sigue disponible.",
-          );
-        }
-        let old: State | null = null;
-        if (legacy) {
-          try {
-            old = JSON.parse(legacy);
-            if (!isWorkspace(old)) throw Error();
-          } catch {
-            old = null;
-            setLegacyCopy(legacy);
-            setLegacyWarning(
-              "La copia anterior del navegador no tiene un formato reconocido; descárgala para conservarla.",
-            );
-          }
-        }
-        let remote = await read();
-        if (!active.current) return;
-        if (remote.state === null) {
-          const preview = old || initial;
-          revision.current = remote.revision;
-          acknowledged.current = "";
-          current.current = encode(preview);
-          setLegacySeed(old);
-          setData(preview);
-          setStatus("setup");
-          return;
-        }
-        const chosen = remote.state;
-        if (!isWorkspace(chosen))
-          throw Error(
-            "La base de datos contiene datos que esta versión no reconoce.",
-          );
-        if (old && remote.state && encode(old) !== encode(remote.state)) {
-          let migrated = false;
-          try {
-            migrated = localStorage.getItem(IMPORTED_KEY) === "1";
-          } catch {}
-          if (!migrated) setLegacyCopy(legacy);
-        }
-        revision.current = remote.revision;
-        acknowledged.current = encode(chosen);
-        current.current = acknowledged.current;
-        setData(chosen);
-        setStatus("ready");
+        const legacy = readLegacyWorkspace(localStorage, setLegacyCopy, setLegacyWarning);
+        const remote = await read();
+        applyInitialWorkspace(remote, legacy, active.current, { revision, acknowledged, current }, { setData, setStatus, setLegacyCopy, setLegacySeed });
       } catch (e) {
         if (!active.current) return;
         blocked.current = true;
@@ -182,47 +292,11 @@ export function useWorkspace() {
   // Refresh only when no local edits or writes are pending; CAS protects simultaneous edits.
   useEffect(() => {
     if (status !== "ready") return;
-    const t = setInterval(async () => {
-      if (
-        running.current ||
-        blocked.current ||
-        current.current !== acknowledged.current
-      )
-        return;
-      try {
-        const remote = await read();
-        if (
-          !active.current ||
-          running.current ||
-          blocked.current ||
-          current.current !== acknowledged.current
-        )
-          return;
-        if (remote.state && remote.revision !== revision.current) {
-          if (!isWorkspace(remote.state))
-            throw Error("La base de datos contiene datos no reconocidos.");
-          revision.current = remote.revision;
-          acknowledged.current = encode(remote.state);
-          current.current = acknowledged.current;
-          setData(remote.state);
-        }
-      } catch (e) {
-        if (active.current) {
-          blocked.current = true;
-          setError(e instanceof Error ? e.message : "No se pudo leer el espacio compartido.");
-          setStatus("error");
-        }
-      }
-    }, 4000);
+    const t = setInterval(() => void refreshWorkspace(read, active, running, blocked, current, acknowledged, revision, setData, setError, setStatus), 4000);
     return () => clearInterval(t);
   }, [status, read]);
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => {
-      if (current.current !== acknowledged.current || running.current) {
-        event.preventDefault();
-        event.returnValue = "";
-      }
-    };
+    const warn = (event: BeforeUnloadEvent) => warnAboutPendingEdits(event, current.current, acknowledged.current, running.current);
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
@@ -276,6 +350,7 @@ export function useWorkspace() {
       const base = JSON.parse(acknowledged.current) as State;
       running.current = true;
       setSafeStatus("saving");
+      const context: WorkspaceWriteContext = { next, base, snapshot, revision, acknowledged, blocked, setData, setError, setStatus: setSafeStatus };
       try {
         const { response, body } = await save(snapshot, revision.current);
         if (response.status === 409) {
@@ -286,38 +361,9 @@ export function useWorkspace() {
         }
         if (!response.ok) throw Error(body.error || "No se pudo guardar el borrador.");
         revision.current = body.revision;
-        acknowledged.current = snapshot;
-        setData((latest) => reconcileWorkspaceWrite(base, latest, next));
-        setSafeStatus("ready");
+        commitWorkspaceWrite(context);
       } catch (e) {
-        let confirmed = false;
-        try {
-          const remote = await read();
-          confirmed = true;
-          if (remote.state && encode(remote.state) === snapshot) {
-            revision.current = remote.revision;
-            acknowledged.current = snapshot;
-            blocked.current = false;
-            setError("");
-            setData((latest) => reconcileWorkspaceWrite(base, latest, next));
-            setSafeStatus("ready");
-            return;
-          }
-        } catch {}
-        if (!confirmed) {
-          const uncertain = new WorkspaceWriteUncertainError(
-            "No se pudo confirmar el guardado. El PDF permanece en el almacenamiento privado; recarga el espacio para comprobar si el borrador llegó a guardarse.",
-          );
-          blocked.current = true;
-          setError(uncertain.message);
-          setSafeStatus("error");
-          throw uncertain;
-        }
-        if (!blocked.current) {
-          blocked.current = true;
-          setError(e instanceof Error ? e.message : "No se pudo guardar el borrador.");
-          setSafeStatus("error");
-        }
+        if (await recoverWorkspaceWrite(e, read, context)) return;
         throw e;
       } finally {
         running.current = false;

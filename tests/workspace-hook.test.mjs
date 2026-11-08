@@ -11,7 +11,7 @@ globalThis.MutationObserver = dom.window.MutationObserver;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { renderHook, act, cleanup, waitFor } = await import('@testing-library/react');
-const { useWorkspace } = await import('../lib/useWorkspace.ts');
+const { useWorkspace, warnAboutPendingEdits } = await import('../lib/useWorkspace.ts');
 const originalFetch = globalThis.fetch;
 
 const state = () => ({
@@ -20,6 +20,21 @@ const state = () => ({
 });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 afterEach(() => { cleanup(); localStorage.clear(); globalThis.fetch = originalFetch; });
+
+test('avisa antes de cerrar solo si quedan cambios sin guardar o una escritura en curso', () => {
+  const event = () => ({ prevented: false, returnValue: 'unchanged', preventDefault() { this.prevented = true; } });
+  const clean = event();
+  warnAboutPendingEdits(clean, 'snapshot', 'snapshot', false);
+  assert.equal(clean.prevented, false);
+  assert.equal(clean.returnValue, 'unchanged');
+  const edited = event();
+  warnAboutPendingEdits(edited, 'new', 'saved', false);
+  assert.equal(edited.prevented, true);
+  assert.equal(edited.returnValue, '');
+  const writing = event();
+  warnAboutPendingEdits(writing, 'same', 'same', true);
+  assert.equal(writing.prevented, true);
+});
 
 test('un espacio vacío espera la importación administrativa sin guardarlo automáticamente', async () => {
   const calls = [];
