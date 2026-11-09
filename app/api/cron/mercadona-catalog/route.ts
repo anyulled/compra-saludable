@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { createClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
+import { NextResponse } from "next/server.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,6 +11,15 @@ const HF_API = `https://huggingface.co/api/datasets/${DATASET}`;
 const HF_RAW = `https://huggingface.co/datasets/${DATASET}/resolve/main/`;
 const MIN_PRODUCTS = 100;
 const BATCH_SIZE = 300;
+
+function retryDelay(attempt: number) {
+  return 250 * 2 ** attempt;
+}
+
+function retryAfterDelay(response: Response, attempt: number) {
+  const seconds = Number(response.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 5) * 1000 : retryDelay(attempt);
+}
 
 type CatalogProduct = {
   id: string;
@@ -41,11 +51,10 @@ async function fetchJson(url: string) {
         throw new Error(`Hugging Face respondió ${response.status}.`);
       }
       lastError = new Error(`Hugging Face respondió ${response.status}.`);
-      const retryAfter = Number(response.headers.get("retry-after"));
-      await new Promise((resolve) => setTimeout(resolve, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 5) * 1000 : 250 * 2 ** attempt));
+      await delay(retryAfterDelay(response, attempt));
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("No se pudo descargar el catálogo.");
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      if (attempt < 2) await delay(retryDelay(attempt));
     }
   }
   throw lastError || new Error("No se pudo descargar el catálogo.");
@@ -91,6 +100,24 @@ function createAdminClient() {
 
 async function synchronizeCatalog() {
   const supabase = createAdminClient();
+  const info = await getDatasetInfo();
+  const categoryFiles = extractCategoryFiles(info);
+  const current = await readSyncState(supabase);
+  if (current?.active_revision === info.sha) return unchangedResult(info.sha, current);
+  const products = await fetchProducts(categoryFiles);
+  const rows = products.map((product) => ({
+    revision: info.sha,
+    product_id: product.id,
+    display_name: product.display_name,
+    product_data: product,
+  }));
+  await writeProductBatches(supabase, rows);
+  const sourceLastModified = typeof info.lastModified === "string" ? info.lastModified : null;
+  await activateRevision(supabase, info.sha, sourceLastModified, rows.length);
+  return { status: "updated", revision: info.sha, sourceLastModified, syncedAt: new Date().toISOString(), categories: categoryFiles.length, productCount: rows.length };
+}
+
+async function getDatasetInfo() {
   const info = await fetchJson(HF_API) as {
     sha?: unknown;
     lastModified?: unknown;
@@ -99,6 +126,10 @@ async function synchronizeCatalog() {
   if (typeof info.sha !== "string" || !/^[a-f0-9]{40}$/.test(info.sha)) {
     throw new Error("Hugging Face no devolvió una revisión válida.");
   }
+  return info as { sha: string; lastModified?: unknown; siblings?: Array<{ rfilename?: unknown }> };
+}
+
+function extractCategoryFiles(info: { siblings?: Array<{ rfilename?: unknown }> }) {
   const categoryFiles = (info.siblings || [])
     .map((file) => file.rfilename)
     .filter((name): name is string => typeof name === "string" && /^categories\/\d+\.json$/.test(name));
@@ -106,57 +137,49 @@ async function synchronizeCatalog() {
     throw new Error("La lista de categorías de Hugging Face no parece completa.");
   }
 
-  const { data: current, error: currentError } = await supabase
+  return categoryFiles;
+}
+
+async function readSyncState(supabase: ReturnType<typeof createAdminClient>) {
+  const { data: current, error } = await supabase
     .from("mercadona_catalog_sync_state")
     .select("active_revision, product_count, synced_at")
     .eq("id", 1)
     .maybeSingle();
-  if (currentError) throw new Error("No se pudo consultar el estado previo del catálogo en Supabase.");
-  if (current?.active_revision === info.sha) {
-    return {
-      status: "unchanged",
-      revision: info.sha,
-      productCount: current.product_count,
-      syncedAt: current.synced_at,
-    };
-  }
+  if (error) throw new Error("No se pudo consultar el estado previo del catálogo en Supabase.");
+  return current;
+}
 
+function unchangedResult(revision: string, current: { product_count: number; synced_at: string }) {
+  return { status: "unchanged", revision, productCount: current.product_count, syncedAt: current.synced_at };
+}
+
+async function fetchProducts(categoryFiles: string[]) {
   const categoryPayloads = await boundedMap(categoryFiles, 8, (file) => fetchJson(HF_RAW + file));
   const products = new Map<string, CatalogProduct>();
   categoryPayloads.forEach((category) => collectProducts(category, products));
   if (products.size < MIN_PRODUCTS) {
     throw new Error(`El catálogo descargado solo contiene ${products.size} productos; no se activó.`);
   }
+  return [...products.values()];
+}
 
-  const rows = [...products.values()].map((product) => ({
-    revision: info.sha as string,
-    product_id: product.id,
-    display_name: product.display_name,
-    product_data: product,
-  }));
+async function writeProductBatches(supabase: ReturnType<typeof createAdminClient>, rows: Array<Record<string, unknown>>) {
   for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
     const { error } = await supabase
       .from("mercadona_catalog_products")
       .upsert(rows.slice(offset, offset + BATCH_SIZE), { onConflict: "revision,product_id" });
     if (error) throw new Error(`No se pudo guardar el lote ${Math.floor(offset / BATCH_SIZE) + 1} del catálogo.`);
   }
+}
 
-  const sourceLastModified = typeof info.lastModified === "string" ? info.lastModified : null;
+async function activateRevision(supabase: ReturnType<typeof createAdminClient>, revision: string, sourceLastModified: string | null, productCount: number) {
   const { error: activationError } = await supabase.rpc("activate_mercadona_catalog_revision", {
-    p_revision: info.sha,
+    p_revision: revision,
     p_source_last_modified: sourceLastModified,
-    p_product_count: rows.length,
+    p_product_count: productCount,
   });
   if (activationError) throw new Error("Los datos se guardaron, pero no se pudo activar la nueva revisión.");
-
-  return {
-    status: "updated",
-    revision: info.sha,
-    sourceLastModified,
-    syncedAt: new Date().toISOString(),
-    categories: categoryFiles.length,
-    productCount: rows.length,
-  };
 }
 
 async function run(request: Request) {

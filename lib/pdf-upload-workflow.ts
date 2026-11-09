@@ -44,3 +44,30 @@ export async function uploadPdfBatchAndPersist({ items, storage, getLatestWorksp
     throw error;
   }
 }
+
+export async function persistSuccessfulPdfBatch({ successful, files, updateJob, setImportProgress, setPersistingUpload, storage, getLatestWorkspace, persist }: {
+  successful: Array<{ file: File; drafts: RecipeDraft[]; documentPath: string; filename: string; pages: number }>;
+  files: File[];
+  updateJob: (index: number, patch: { status: "saving" | "done" | "error"; progress: string }) => void;
+  setImportProgress: (progress: string) => void;
+  setPersistingUpload: (persisting: boolean) => void;
+  storage: PdfStorage;
+  getLatestWorkspace: () => State;
+  persist: (state: State) => Promise<void>;
+}) {
+  if (!successful.length) return null;
+  for (const item of successful) updateJob(files.indexOf(item.file), { status: "saving", progress: "Guardando originales y páginas…" });
+  setImportProgress("Guardando en el espacio compartido…");
+  setPersistingUpload(true);
+  try {
+    await uploadPdfBatchAndPersist({ items: successful, storage, getLatestWorkspace, persist });
+    for (const item of successful) updateJob(files.indexOf(item.file), { status: "done", progress: `${item.pages} páginas · pendiente de revisión` });
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo guardar el lote.";
+    for (const item of successful) updateJob(files.indexOf(item.file), { status: "error", progress: message });
+    return message;
+  } finally {
+    setPersistingUpload(false);
+  }
+}
