@@ -43,9 +43,24 @@ const { default: Dashboard } = await import("../app/dashboard.tsx");
 const { default: RecipeEntryForm } = await import("../components/RecipeEntryForm.tsx");
 const { default: IngredientProductResolver } = await import("../components/IngredientProductResolver.tsx");
 const { DraftOriginalCard } = await import("../components/RecipeReviewPanels.tsx");
+const { RecipeImportCard } = await import("../components/RecipeReviewPanels.tsx");
 const { WorkspaceConflictScreen } = await import("../components/WorkspaceStatusScreens.tsx");
 
 afterEach(cleanup);
+
+test("la importación presenta estados de los PDF por cada trabajo", () => {
+  render(React.createElement(RecipeImportCard, { importing: true, progress: "Procesando", upload: () => {}, jobs: [
+    { id: "q", name: "cola.pdf", status: "queued", progress: "" },
+    { id: "p", name: "proceso.pdf", status: "processing", progress: "OCR" },
+    { id: "s", name: "guardado.pdf", status: "saving", progress: "" },
+    { id: "d", name: "listo.pdf", status: "done", progress: "" },
+    { id: "e", name: "error.pdf", status: "error", progress: "falló" },
+  ] }));
+  assert.match(screen.getByText("OCR").textContent, /OCR/);
+  assert.ok(screen.getByText("Listo para revisar"));
+  assert.ok(screen.getByText("Guardando en el espacio compartido…"));
+  assert.ok(screen.getByText("No se pudo importar"));
+});
 
 test("el formulario de receta conserva la vitamina D vacía, acepta cero y rechaza negativos", () => {
   const calls = [];
@@ -278,6 +293,35 @@ test("dashboard carga el hogar y guarda un producto añadido manualmente", async
     fireEvent.click(within(item).getByRole("checkbox"));
     await waitFor(() => assert.equal(stored.shopping[0]?.checked, true), { timeout: 3000 });
     assert.equal(stored.confirmed, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("reintenta la búsqueda de un ingrediente y permite asociar una alternativa", async () => {
+  const previousFetch = globalThis.fetch;
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  let revision = 1;
+  let stored = { profiles: [profile, { ...profile, name: "B" }], products: [], recipes: [{ id: "r1", name: "Plato", meal: "Comida", approved: true, calories: 300, protein: 20, carbs: 30, fat: 10, ingredients: [{ name: "garbanzos", amount: 100, unit: "g", productOptions: [] }], rating: 3, notes: "" }], plan: [], shopping: [], confirmed: false, drafts: [], approvedDocuments: {} };
+  globalThis.fetch = async (url, init = {}) => {
+    if (url === "/api/workspace" && init.method === "PUT") { stored = JSON.parse(init.body).state; return Response.json({ ok: true, revision: ++revision }); }
+    if (url === "/api/workspace") return Response.json({ state: stored, revision });
+    if (url === "/api/mercadona/search") return Response.json({ results: [{ query: "garbanzos", products: [
+      { id: "p1", name: "Garbanzos cocidos", unit: "g", size: 500, price: 1, source: "Mercadona", warning: null, productUrl: null },
+      { id: "p2", name: "Garbanzos secos", unit: "g", size: 1, price: 2, source: "Mercadona", warning: null, productUrl: null },
+    ] }] });
+    throw Error(`Petición inesperada: ${url}`);
+  };
+  try {
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a buscar" }));
+    assert.ok(await screen.findByText(/Se encontraron 2 alternativas/));
+    fireEvent.click(screen.getByRole("button", { name: /Garbanzos cocidos/ }));
+    assert.ok(await screen.findByText(/Producto Garbanzos cocidos asociado/));
+    await waitFor(() => assert.equal(stored.recipes[0].ingredients[0].productId, "p1"));
   } finally {
     globalThis.fetch = previousFetch;
   }

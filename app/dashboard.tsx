@@ -15,12 +15,13 @@ import { importPdf } from "../lib/pdf-import";
 import { extractRecipe } from "../lib/recipe-extraction.mjs";
 import { getSupabaseBrowserClient } from "../lib/supabase/browser";
 import { mercadonaResultMessage, requireMercadonaPrice } from "../lib/mercadona-lookup.mjs";
-import { profileObjectivesComplete, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { pdfFailureMessages, profileObjectivesComplete, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
 import { isCurrentPdfPreview, isHouseholdPdfPath } from "../lib/pdf-preview-state.mjs";
-import { notifyBatchReady, requestBrowserNotificationPermission, runWithConcurrency } from "../lib/pdf-batch.mjs";
+import { notifyBatchReady, pdfImportBlockMessage, requestBrowserNotificationPermission, runWithConcurrency } from "../lib/pdf-batch.mjs";
 import type { PdfImportJobView } from "../components/RecipeReviewPanels";
-import { prepareStoredPdfDrafts, uploadPdfBatchAndPersist } from "../lib/pdf-upload-workflow";
+import { persistSuccessfulPdfBatch, prepareStoredPdfDrafts } from "../lib/pdf-upload-workflow";
 import { matchIngredientOptions, matchRecipeIngredients } from "../lib/recipe-product-match.mjs";
+import { appendApprovedRecipe, applyRecipeMatches, approvedRecipe, recipeSavedMessage, recipeValidationMessage } from "../lib/recipe-workflow.mjs";
 import {
   initial,
   type State,
@@ -167,14 +168,8 @@ export default function Dashboard({
       ),
     }));
   const uploadPdf = async (files: File[]) => {
-    if (files.length > 10) {
-      setMessage("Selecciona como máximo 10 PDF por lote.");
-      return;
-    }
-    if (storageStatus !== "ready") {
-      setMessage("Espera a que el espacio compartido esté guardado antes de importar un PDF.");
-      return;
-    }
+    const blockedMessage = pdfImportBlockMessage(files.length, storageStatus);
+    if (blockedMessage) { setMessage(blockedMessage); return; }
     const notificationsEnabled = await requestBrowserNotificationPermission();
     flushSync(() => setImporting(true));
     setMessage("");
@@ -194,24 +189,9 @@ export default function Dashboard({
         }
       });
       const successful = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-      let batchFailure: string | null = null;
-      if (successful.length) {
-        successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "saving", progress: "Guardando originales y páginas…" }));
-        setImportProgress("Guardando en el espacio compartido…");
-        setPersistingUpload(true);
-        try {
-          const storage = getSupabaseBrowserClient().storage.from("household-documents");
-          await uploadPdfBatchAndPersist({ items: successful, storage, getLatestWorkspace: () => dataRef.current, persist: persistWorkspace });
-          successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "done", progress: `${item.pages} páginas · pendiente de revisión` }));
-        } catch (error) {
-          batchFailure = error instanceof Error ? error.message : "No se pudo guardar el lote.";
-          successful.forEach((item) => updateJob(files.indexOf(item.file), { status: "error", progress: batchFailure || "No se pudo guardar el lote." }));
-        } finally {
-          setPersistingUpload(false);
-        }
-      }
-      const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${files[index].name}: ${result.reason instanceof Error ? result.reason.message : "error desconocido"}`] : []);
-      if (batchFailure) failures.push(batchFailure);
+      const storage = getSupabaseBrowserClient().storage.from("household-documents");
+      const batchFailure = await persistSuccessfulPdfBatch({ successful, files, updateJob, setImportProgress, setPersistingUpload, storage, getLatestWorkspace: () => dataRef.current, persist: persistWorkspace });
+      const failures = pdfFailureMessages(results, files, batchFailure);
       const savedCount = batchFailure ? 0 : successful.length;
       const summary = `${savedCount} de ${files.length} PDF listos para revisar${savedCount ? ` (${successful.map((item) => `${item.filename}: ${item.pages} páginas`).join("; ")})` : ""}.${failures.length ? ` Errores: ${failures.join("; ")}` : ""}`;
       setMessage(summary);
@@ -289,47 +269,10 @@ export default function Dashboard({
     });
   };
   const addRecipe = async () => {
-    if (selectedDraft && !reviewConfirmed) {
-      setMessage(
-        "Confirma que has revisado el original, las raciones y todos los ingredientes antes de guardar.",
-      );
-      return;
-    }
-    if (
-      !recipe.name.trim() ||
-      [recipe.calories, recipe.protein, recipe.carbs, recipe.fat].some(
-        (n) => n <= 0,
-      ) ||
-      !recipe.ingredients.length ||
-      recipe.ingredients.some((i) => i.amount <= 0 || !i.name?.trim())
-    ) {
-      setMessage(
-        "Completa nombre, nutrientes e ingredientes con cantidades positivas.",
-      );
-      return;
-    }
-    const newRecipe: Recipe = {
-      ...recipe,
-      id: id(),
-      approved: true,
-      sourceDraftId: selectedDraft || undefined,
-      ingredients: recipe.ingredients.map((ingredient) => ({ ...ingredient, name: ingredient.name?.trim(), productId: undefined, productOptions: undefined })),
-    };
-    setData((s) => {
-      const source = (s.drafts || []).find((d) => d.id === selectedDraft);
-      return {
-        ...s,
-        recipes: [...s.recipes, newRecipe],
-        drafts: source
-          ? (s.drafts || []).map((d) =>
-              d.id === source.id ? { ...d, status: "reviewing" } : d,
-            )
-          : s.drafts,
-        approvedDocuments: source
-          ? { ...s.approvedDocuments, [documentKey(source)]: false }
-          : s.approvedDocuments,
-      };
-    });
+    const validation = recipeValidationMessage(recipe, selectedDraft, reviewConfirmed);
+    if (validation) { setMessage(validation); return; }
+    const newRecipe: Recipe = approvedRecipe(recipe, id(), selectedDraft);
+    setData(appendApprovedRecipe.bind(null, newRecipe, selectedDraft));
     const sourceWasSelected = Boolean(selectedDraft);
     setRecipe({
       id: "", name: "", meal: "Comida", calories: 0, protein: 0, carbs: 0, fat: 0,
@@ -345,15 +288,8 @@ export default function Dashboard({
       const payload = await response.json();
       if (!response.ok) throw Error(payload.error || "No se pudieron buscar los ingredientes en Mercadona.");
       const matches = matchRecipeIngredients(newRecipe.ingredients, payload.results || []);
-      setData((state) => ({
-        ...state,
-        recipes: state.recipes.map((saved) => saved.id !== newRecipe.id ? saved : {
-          ...saved,
-          ingredients: matches.ingredients,
-        }),
-        products: [...state.products, ...matches.products.filter((product) => !state.products.some((existing) => existing.id === product.id))],
-      }));
-      setMessage(matches.unresolvedCount ? `Receta guardada. Revisa ${matches.unresolvedCount} ingrediente(s) en “Elegir productos de Mercadona”.${sourceWasSelected ? " El PDF original sigue disponible en la biblioteca." : ""}` : `Receta guardada y productos únicos añadidos al catálogo.${sourceWasSelected ? " El PDF original sigue disponible en la biblioteca." : ""}`);
+      setData(applyRecipeMatches.bind(null, newRecipe.id, matches));
+      setMessage(recipeSavedMessage(matches.unresolvedCount, sourceWasSelected));
     } catch (error) {
       setMessage(error instanceof Error ? `Receta guardada. No se pudo completar la búsqueda: ${error.message}` : "Receta guardada, pero no se pudo buscar en Mercadona.");
     }
@@ -366,16 +302,7 @@ export default function Dashboard({
       ),
     }));
   const chooseIngredientProduct = (selectedRecipe: Recipe, ingredientIndex: number, chosen: Product) => {
-    setData((state) => {
-      const recipes = state.recipes.map((saved) => saved.id !== selectedRecipe.id ? saved : {
-        ...saved,
-        ingredients: saved.ingredients.map((ingredient, index) => index !== ingredientIndex ? ingredient : chosen.id
-          ? { ...ingredient, productId: chosen.id, productOptions: undefined }
-          : { ...ingredient, productOptions: undefined }),
-      });
-      const products = chosen.id && !state.products.some((item) => item.id === chosen.id) ? [...state.products, chosen] : state.products;
-      return { ...state, recipes, products };
-    });
+    setData(updateChosenIngredient.bind(null, selectedRecipe, ingredientIndex, chosen));
     setMessage(chosen.id ? `Producto ${chosen.name} asociado a ${selectedRecipe.name}.` : `El ingrediente “${selectedRecipe.ingredients[ingredientIndex]?.name || ""}” queda sin asociar.`);
   };
   const retryIngredientSearch = async (selectedRecipe: Recipe, ingredientIndex: number) => {

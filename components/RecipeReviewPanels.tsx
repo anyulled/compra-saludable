@@ -6,6 +6,24 @@ export type RecipePdfPreview = { filename: string; url: string; documentId?: str
 type PageState = NonNullable<RecipeDraft["status"]>;
 export type PdfImportJobView = { id: string; name: string; status: "queued" | "processing" | "saving" | "done" | "error"; progress: string };
 
+function importJobStatus(job: PdfImportJobView) {
+  switch (job.status) {
+    case "done": return "Listo para revisar";
+    case "error": return "No se pudo importar";
+    case "saving": return "Guardando en el espacio compartido…";
+    case "processing": return job.progress || "Procesando…";
+    default: return "En cola";
+  }
+}
+
+function ImportJobRow({ job }: { job: PdfImportJobView }) {
+  return <li data-status={job.status}><strong>{job.name}</strong><span>{importJobStatus(job)}</span></li>;
+}
+
+function renderImportJob(job: PdfImportJobView) {
+  return <ImportJobRow key={job.id} job={job} />;
+}
+
 export function RecipeImportCard({ importing, progress, jobs, upload }: {
   importing: boolean;
   progress: string;
@@ -18,7 +36,7 @@ export function RecipeImportCard({ importing, progress, jobs, upload }: {
       <p className="help">Selecciona uno o varios PDF. Se procesan hasta dos archivos a la vez; mantén esta página abierta hasta que termine y recibirás una notificación si el navegador la permite. Cada página queda pendiente de revisión.</p>
       <label className="field"><span>Seleccionar PDF</span><input type="file" accept="application/pdf,.pdf" multiple disabled={importing} onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) upload(files); }} /></label>
       {importing && <p role="status">{progress || "Leyendo el documento…"}</p>}
-      {jobs.length > 0 && <ul className="import-job-list" aria-label="Estado de importación">{jobs.map((job) => <li key={job.id} data-status={job.status}><strong>{job.name}</strong><span>{job.status === "done" ? "Listo para revisar" : job.status === "error" ? "No se pudo importar" : job.status === "saving" ? "Guardando en el espacio compartido…" : job.status === "processing" ? job.progress || "Procesando…" : "En cola"}</span></li>)}</ul>}
+      {jobs.length > 0 && <ul className="import-job-list" aria-label="Estado de importación">{jobs.map(renderImportJob)}</ul>}
       <p className="help">El PDF y el OCR se procesan en este navegador. Los borradores y el original se guardan en vuestro espacio privado. Revisa manualmente el texto y las recetas detectadas.</p>
     </section>
   );
