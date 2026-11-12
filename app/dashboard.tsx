@@ -21,7 +21,17 @@ import { notifyBatchReady, pdfImportBlockMessage, requestBrowserNotificationPerm
 import type { PdfImportJobView } from "../components/RecipeReviewPanels";
 import { persistSuccessfulPdfBatch, prepareStoredPdfDrafts } from "../lib/pdf-upload-workflow";
 import { matchIngredientOptions, matchRecipeIngredients } from "../lib/recipe-product-match.mjs";
-import { appendApprovedRecipe, applyRecipeMatches, approvedRecipe, recipeSavedMessage, recipeValidationMessage } from "../lib/recipe-workflow.mjs";
+import {
+  appendApprovedRecipe,
+  applyBatchRecipeMatches,
+  applyRecipeMatches,
+  approvedRecipe,
+  buildRecipeFromDraft,
+  collectUncachedIngredientQueries,
+  processImportedDraftBatch,
+  recipeSavedMessage,
+  recipeValidationMessage,
+} from "../lib/recipe-workflow.mjs";
 import {
   initial,
   type State,
@@ -33,6 +43,32 @@ import {
   type OptimizationOptions,
   type RecipeDraft,
 } from "../lib/types";
+
+async function resolveBatchIngredientsMercadona(
+  autoApproved: Recipe[],
+  existingRecipes: Recipe[],
+  setProgress: (p: string) => void,
+  applyMatches: (results: any[]) => void,
+) {
+  if (autoApproved.length === 0) return;
+  setProgress("Buscando ingredientes en Mercadona por lotes…");
+  const chunks = collectUncachedIngredientQueries(autoApproved, existingRecipes);
+  for (const chunk of chunks) {
+    try {
+      const res = await fetch("/api/mercadona/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ queries: chunk }),
+      });
+      if (res.ok) {
+        const { results } = await res.json();
+        if (Array.isArray(results)) applyMatches(results);
+      }
+    } catch {
+      // Non-blocking lookup failure
+    }
+  }
+}
 
 const id = () => crypto.randomUUID().replaceAll("-", "");
 export default function Dashboard({
@@ -180,9 +216,23 @@ export default function Dashboard({
       const results = await runWithConcurrency(files, 2, async (file: File, index: number) => {
         updateJob(index, { status: "processing", progress: "Iniciando PDF y OCR…" });
         try {
-          const drafts = await importPdf(file, (progress) => updateJob(index, { status: "processing", progress }));
-          const prepared = prepareStoredPdfDrafts(drafts, householdId, dataRef.current);
-          return { file, drafts: prepared.storedDrafts, documentPath: prepared.documentPath, filename: file.name, pages: drafts.length };
+          const rawDrafts = await importPdf(file, (progress) => updateJob(index, { status: "processing", progress }));
+          const batchResult = processImportedDraftBatch({
+            drafts: rawDrafts,
+            existingRecipes: dataRef.current.recipes,
+            createId: id,
+          });
+          const prepared = prepareStoredPdfDrafts(batchResult.classifiedDrafts, householdId, dataRef.current, batchResult.autoApprovedRecipes);
+          return {
+            file,
+            drafts: prepared.storedDrafts,
+            documentPath: prepared.documentPath,
+            filename: file.name,
+            pages: rawDrafts.length,
+            autoApprovedRecipes: batchResult.autoApprovedRecipes,
+            approvedCount: batchResult.summary.approvedCount,
+            pendingCount: batchResult.summary.pendingCount,
+          };
         } catch (error) {
           updateJob(index, { status: "error", progress: error instanceof Error ? error.message : "No se pudo leer el PDF." });
           throw error;
@@ -193,9 +243,27 @@ export default function Dashboard({
       const batchFailure = await persistSuccessfulPdfBatch({ successful, files, updateJob, setImportProgress, setPersistingUpload, storage, getLatestWorkspace: () => dataRef.current, persist: persistWorkspace });
       const failures = pdfFailureMessages(results, files, batchFailure);
       const savedCount = batchFailure ? 0 : successful.length;
+      const allAutoApproved = successful.flatMap((s) => s.autoApprovedRecipes || []);
+      const totalApproved = successful.reduce((sum, s) => sum + (s.approvedCount || 0), 0);
+      const totalPending = successful.reduce((sum, s) => sum + (s.pendingCount || 0), 0);
+
+      await resolveBatchIngredientsMercadona(
+        allAutoApproved,
+        dataRef.current.recipes,
+        setImportProgress,
+        (searchResults) =>
+          setData((currentState) =>
+            applyBatchRecipeMatches(
+              allAutoApproved.map((r) => r.id),
+              searchResults,
+              currentState,
+            ),
+          ),
+      );
+
       const summary = `${savedCount} de ${files.length} PDF listos para revisar${savedCount ? ` (${successful.map((item) => `${item.filename}: ${item.pages} páginas`).join("; ")})` : ""}.${failures.length ? ` Errores: ${failures.join("; ")}` : ""}`;
       setMessage(summary);
-      const notified = savedCount > 0 && notifyBatchReady("Recetarios listos para revisar", `${savedCount} PDF procesados; abre Recetas para revisar las páginas.${failures.length ? ` ${failures.length} con errores.` : ""}`);
+      const notified = savedCount > 0 && notifyBatchReady("Recetarios listos para revisar", `${savedCount} PDF procesados; ${totalApproved} recetas listas.${failures.length ? ` ${failures.length} con errores.` : ""}`);
       if (!notified && !notificationsEnabled) setMessage(`${summary} Activa las notificaciones del navegador para recibir avisos de próximos lotes.`);
     } finally {
       setImportProgress("");
@@ -251,22 +319,10 @@ export default function Dashboard({
   const reviewDraft = (draft: RecipeDraft) => {
     setPageStatus(draft, "reviewing");
     setTab("Recetas");
-    setReviewConfirmed(false);
+    setReviewConfirmed(true);
     setSelectedDraft(draft.id);
     void openDocument(draft);
-    setRecipe({
-      id: "",
-      name: "",
-      meal: "Comida",
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      ingredients: [],
-      rating: 3,
-      notes: `Origen: ${draft.filename}, página ${draft.page}.\n\n${draft.text}`,
-      approved: false,
-    });
+    setRecipe(buildRecipeFromDraft(draft, id()));
   };
   const addRecipe = async () => {
     const validation = recipeValidationMessage(recipe, selectedDraft, reviewConfirmed);
@@ -387,7 +443,13 @@ export default function Dashboard({
   const dirty = !!data.planDirty;
   const ready = data.profiles.every(profileObjectivesComplete);
   const selectedPage = (data.drafts || []).find((d) => d.id === selectedDraft);
-  const suggestions = selectedPage ? extractRecipe(selectedPage.text) : null;
+  const suggestions = selectedPage
+    ? extractRecipe(selectedPage.text, {
+        filename: selectedPage.filename,
+        pageNumber: selectedPage.page,
+        method: selectedPage.method,
+      })
+    : null;
   const recipeById = (rid: string) => data.recipes.find((r) => r.id === rid);
   const total = data.shopping.reduce((n, p) => n + p.price * p.packages, 0);
   if (storageStatus === "loading") return <WorkspaceLoadingScreen />;

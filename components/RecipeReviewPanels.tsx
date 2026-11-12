@@ -1,6 +1,7 @@
 import { AlertCircle } from "lucide-react";
 import { pageStatus } from "../lib/import-status.mjs";
-import type { RecipeDraft, Recipe, State } from "../lib/types";
+import { extractRecipe } from "../lib/recipe-extraction.mjs";
+import type { RecipeDraft, State } from "../lib/types";
 
 export type RecipePdfPreview = { filename: string; url: string; documentId?: string } | null;
 type PageState = NonNullable<RecipeDraft["status"]>;
@@ -86,12 +87,34 @@ function DraftRow({ draft, recipes, selectedDraft, review, setStatus, setSelecte
   setSelectedDraft: (id: string | null) => void;
 }) {
   const hasRecipe = recipes.some((recipe) => recipe.sourceDraftId === draft.id);
+  const extracted = extractRecipe(draft.text, {
+    filename: draft.filename,
+    pageNumber: draft.page,
+    method: draft.method,
+  });
+  const reasonsLabel = extracted.reviewReasons.length > 0 ? ` · Motivos: ${extracted.reviewReasons.join(", ")}` : "";
   return (
     <div className="list-row">
-      <div><strong>{draft.filename}</strong><p>Página {draft.page} · {draftMethod(draft.method)} · {draftStatusLabel(draft)} · {draft.text.slice(0, 90) || "Revisa el documento original"}…</p></div>
+      <div>
+        <strong>{draft.filename}</strong>
+        <p>Página {draft.page} · {draftMethod(draft.method)} · {extracted.meal} · {draftStatusLabel(draft)}{reasonsLabel} · {draft.text.slice(0, 80) || "Revisa el documento original"}…</p>
+      </div>
       <DraftActions draft={draft} hasRecipe={hasRecipe} selected={selectedDraft === draft.id} review={review} setStatus={setStatus} clearSelected={() => selectedDraft === draft.id && setSelectedDraft(null)} />
     </div>
   );
+}
+
+function countDraftStatuses(drafts: RecipeDraft[]) {
+  let pending = 0;
+  let reviewed = 0;
+  let discarded = 0;
+  for (const d of drafts) {
+    const s = pageStatus(d);
+    if (s === "reviewed") reviewed++;
+    else if (s === "discarded") discarded++;
+    else pending++;
+  }
+  return { pending, reviewed, discarded };
 }
 
 export function DraftReviewList({ drafts, recipes, selectedDraft, review, setStatus, setSelectedDraft }: {
@@ -103,7 +126,26 @@ export function DraftReviewList({ drafts, recipes, selectedDraft, review, setSta
   setSelectedDraft: (id: string | null) => void;
 }) {
   if (drafts.length === 0) return null;
-  return <section className="card"><h2>Páginas importadas</h2><p className="help">Una página puede contener varias recetas. Cuando hayas añadido todas sus recetas, márcala como revisada; si no contiene recetas, márcala como descartada. Filtra por estado en la biblioteca.</p><div className="draft-list">{drafts.map((draft) => <DraftRow key={draft.id} draft={draft} recipes={recipes} selectedDraft={selectedDraft} review={review} setStatus={setStatus} setSelectedDraft={setSelectedDraft} />)}</div></section>;
+  const { pending: pendingCount, reviewed: reviewedCount, discarded: discardedCount } = countDraftStatuses(drafts);
+
+  return (
+    <section className="card">
+      <h2>Páginas importadas</h2>
+      {pendingCount === 0 && (
+        <div className="import-summary-banner" style={{ marginBottom: "1rem" }}>
+          <p className="help">
+            Todas las páginas importadas han sido procesadas ({drafts.length} páginas: {reviewedCount} recetas listas, {discardedCount} descartadas). No quedan excepciones pendientes de revisión.
+          </p>
+        </div>
+      )}
+      <p className="help">Una página puede contener varias recetas. Cuando hayas añadido todas sus recetas, márcala como revisada; si no contiene recetas, márcala como descartada. Filtra por estado en la biblioteca.</p>
+      <div className="draft-list">
+        {drafts.map((draft) => (
+          <DraftRow key={draft.id} draft={draft} recipes={recipes} selectedDraft={selectedDraft} review={review} setStatus={setStatus} setSelectedDraft={setSelectedDraft} />
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ExistingPdfPreview({ draft, preview, openDocument, openingDocument }: {

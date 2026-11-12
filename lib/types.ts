@@ -81,6 +81,38 @@ export type Recipe = {
   approved: boolean;
   sourceDraftId?: string;
 };
+export type PageClassification = "cover" | "index" | "recipe";
+export type MealSource = "filename" | "document_header" | "page_text" | "default";
+export type MealConfidence = "resolved" | "default" | "ambiguous";
+
+export type ExtractedNutrition = {
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  fiberG?: number;
+  freeSugarG?: number;
+  sodiumMg?: number;
+};
+
+export type ExtractedRecipe = {
+  pageType: PageClassification;
+  title: string;
+  meal: Meal;
+  mealSource: MealSource;
+  mealConfidence: MealConfidence;
+  servings: number;
+  nutrition: ExtractedNutrition;
+  ingredients: string[];
+  structuredIngredients: Ingredient[];
+  unparsedIngredients: string[];
+  seasoningNotes: string[];
+  preparation: string;
+  per100: boolean;
+  ambiguous: string[];
+  reviewReasons: string[];
+};
+
 export type RecipeDraft = {
   id: string;
   filename: string;
