@@ -28,16 +28,18 @@ function renderOption(option: IngredientProductOption, recipe: Recipe, ingredien
   return <OptionButton key={option.id} option={option} recipe={recipe} ingredient={ingredient} ingredientIndex={ingredientIndex} onChoose={onChoose} />;
 }
 
-function ResolverRow({ recipe, ingredientIndex, onChoose, onRetry }: {
+function ResolverRow({ recipe, ingredientIndex, count = 1, onChoose, onRetry }: {
   recipe: Recipe;
   ingredientIndex: number;
+  count?: number;
   onChoose: (recipe: Recipe, ingredientIndex: number, product: Product) => void;
   onRetry: (recipe: Recipe, ingredientIndex: number) => void;
 }) {
   const ingredient = recipe.ingredients[ingredientIndex];
   const options = ingredient.productOptions || [];
+  const usageLabel = count > 1 ? ` · usado en ${count} recetas` : "";
   return <div className="list-row"><div>
-    <strong>{ingredient.name || "Ingrediente sin nombre"}</strong><p>{ingredient.amount} {ingredient.unit || "g"} · {options.length} coincidencias</p>
+    <strong>{ingredient.name || "Ingrediente sin nombre"}</strong><p>{ingredient.amount} {ingredient.unit || "g"}{usageLabel} · {options.length} coincidencias</p>
     {options.length ? <div className="form-grid">{options.map((option) => renderOption(option, recipe, ingredient, ingredientIndex, onChoose))}</div> : <p className="help">No se encontraron coincidencias. Cambia el nombre o intenta buscar de nuevo.</p>}
     {!options.length && <button className="secondary" onClick={() => onRetry(recipe, ingredientIndex)}>Volver a buscar</button>}
     <button className="secondary" onClick={() => onChoose(recipe, ingredientIndex, { id: "", name: "", unit: "", size: 0, price: 0, stock: 0, source: "" })}>Dejar sin asociar</button>
@@ -49,7 +51,21 @@ export default function IngredientProductResolver({ recipes, onChoose, onRetry }
   onChoose: (recipe: Recipe, ingredientIndex: number, product: Product) => void;
   onRetry: (recipe: Recipe, ingredientIndex: number) => void;
 }) {
-  const unresolved = recipes.flatMap((recipe) => recipe.ingredients.map((ingredient, index) => ({ recipe, ingredient, index })).filter(({ ingredient }) => !ingredient.productId && Boolean(ingredient.name)));
+  const unresolvedMap = new Map<string, { recipe: Recipe; ingredient: Recipe["ingredients"][number]; index: number; count: number }>();
+  for (const recipe of recipes) {
+    (recipe.ingredients || []).forEach((ingredient, index) => {
+      if (!ingredient.productId && ingredient.name?.trim()) {
+        const key = `${ingredient.name.trim().toLocaleLowerCase("es")}|${ingredient.unit || "g"}`;
+        const existing = unresolvedMap.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          unresolvedMap.set(key, { recipe, ingredient, index, count: 1 });
+        }
+      }
+    });
+  }
+  const unresolved = Array.from(unresolvedMap.values());
   if (!unresolved.length) return null;
-  return <section className="card"><h2>Elegir productos de Mercadona</h2><p className="help">Revisa que el producto, el formato y la unidad coincidan con la receta antes de asociarlo. La asociación no estima la nutrición.</p><div className="list">{unresolved.map(({ recipe, index }) => <ResolverRow key={`${recipe.id}-${index}`} recipe={recipe} ingredientIndex={index} onChoose={onChoose} onRetry={onRetry} />)}</div></section>;
+  return <section className="card"><h2>Elegir productos de Mercadona</h2><p className="help">Revisa que el producto, el formato y la unidad coincidan con la receta antes de asociarlo. La asociación no estima la nutrición.</p><div className="list">{unresolved.map(({ recipe, index, count }) => <ResolverRow key={`${recipe.id}-${index}`} recipe={recipe} ingredientIndex={index} count={count} onChoose={onChoose} onRetry={onRetry} />)}</div></section>;
 }

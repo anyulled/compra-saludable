@@ -26,13 +26,16 @@ test("actualiza el checkbox de compra preservando el resto de productos", () => 
 
 test("asocia o deja sin asociar un ingrediente y conserva productos existentes", () => {
   const recipe = { id: "r1", ingredients: [{ name: "tomate", productOptions: [{ id: "p1" }] }] };
-  const state = { recipes: [recipe], products: [{ id: "old" }] };
+  const recipe2 = { id: "r2", ingredients: [{ name: "Tomate", unit: "g", productOptions: [{ id: "p1" }] }] };
+  const state = { recipes: [recipe, recipe2], products: [{ id: "old" }] };
   const chosen = { id: "new", name: "Tomate", unit: "g", size: 500, price: 1, stock: 0, source: "Mercadona" };
   const linked = updateChosenIngredient(recipe, 0, chosen, state);
   assert.equal(linked.recipes[0].ingredients[0].productId, "new");
+  assert.equal(linked.recipes[1].ingredients[0].productId, "new");
   assert.equal(linked.products.length, 2);
   const unlinked = updateChosenIngredient(recipe, 0, { ...chosen, id: "" }, state);
   assert.equal(unlinked.recipes[0].ingredients[0].productId, undefined);
+  assert.equal(unlinked.recipes[1].ingredients[0].productId, undefined);
   assert.equal(unlinked.products.length, 1);
   assert.deepEqual(state.recipes[0].ingredients[0].productOptions, [{ id: "p1" }]);
 });
