@@ -613,6 +613,8 @@ textarea {
   z-index: 900;
   width: max-content;
   max-width: min(420px, calc(100vw - 32px));
+  max-height: min(80vh, calc(100dvh - 48px));
+  overflow-y: auto;
   margin: 0;
   background: #edf3e9;
   color: #4b6b50;
@@ -628,6 +630,8 @@ textarea {
   color: inherit;
   cursor: pointer;
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
   display: grid;
   place-items: center;
 }
@@ -867,6 +871,7 @@ textarea {
     right: 16px;
     bottom: 16px;
     max-width: calc(100vw - 32px);
+    max-height: min(80vh, calc(100dvh - 32px));
   }
 }
 
