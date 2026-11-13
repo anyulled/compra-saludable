@@ -1,5 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mockOpts } from './mock-module.mjs';
 
 let pages = [];
 let destroyed = 0;
@@ -15,10 +16,7 @@ const pdfMock = {
     destroy: async () => { destroyed++; },
   }),
 };
-mock.module('pdfjs-dist', {
-  namedExports: pdfMock,
-  exports: pdfMock,
-});
+mock.module('pdfjs-dist', mockOpts(pdfMock));
 const tesseractMock = {
   createWorker: async () => {
     workerStarts++;
@@ -26,10 +24,7 @@ const tesseractMock = {
     return { recognize: async () => ({ data: { text: ocrText } }), terminate: async () => { terminated++; } };
   },
 };
-mock.module('tesseract.js', {
-  namedExports: tesseractMock,
-  exports: tesseractMock,
-});
+mock.module('tesseract.js', mockOpts(tesseractMock));
 globalThis.document = { createElement: () => ({ getContext: () => ({}), width: 0, height: 0 }) };
 
 const { importPdf, validatePdfFile, MAX_PDF_BYTES } = await import('../../lib/pdf-import.ts');

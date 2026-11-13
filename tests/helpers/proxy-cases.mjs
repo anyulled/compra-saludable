@@ -1,6 +1,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { NextRequest } from 'next/server.js';
+import { mockOpts } from './mock-module.mjs';
 
 let user = null;
 let refresh = false;
@@ -8,10 +9,9 @@ const createMockClient = (_url, _key, options) => ({ auth: { async getUser() {
   if (refresh) options.cookies.setAll([{ name: 'test-session', value: 'new-token', options: { path: '/' } }]);
   return { data: { user }, error: null };
 } } });
-mock.module('@supabase/ssr', {
-  namedExports: { createServerClient: createMockClient },
-  exports: { createServerClient: createMockClient },
-});
+mock.module('@supabase/ssr', mockOpts({
+  createServerClient: createMockClient,
+}));
 const { proxy } = await import('../../proxy.ts');
 const request = path => new NextRequest(`https://mesa.example${path}`);
 const configure = () => {

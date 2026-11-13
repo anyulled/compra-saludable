@@ -2,6 +2,7 @@ import test, { afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { JSDOM } from "jsdom";
+import { mockOpts } from "./helpers/mock-module.mjs";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
 globalThis.window = dom.window;
@@ -11,27 +12,23 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.MutationObserver = dom.window.MutationObserver;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-mock.module("next/image", {
-  defaultExport: ({ src, alt }) => React.createElement("img", { src, alt }),
-});
+mock.module("next/image", mockOpts({
+  default: ({ src, alt }) => React.createElement("img", { src, alt }),
+}));
 let uploadedPaths = [];
 let downloadedPaths = [];
 let removedPaths = [];
 let downloadFailure = false;
-mock.module("../lib/pdf-import.ts", {
-  namedExports: {
-    importPdf: async (file) => [{ id: `mock-${file.name}`, documentId: file.name === "Cocina.pdf" ? "11111111-1111-4111-8111-111111111111" : file.name === "A.pdf" ? "33333333-3333-4333-8333-333333333333" : file.name === "B.pdf" ? "44444444-4444-4444-8444-444444444444" : "22222222-2222-4222-8222-222222222222", filename: file.name, page: 1, status: "pending", method: "text", text: "ENSALADA\n100 g tomate\n1. Mezclar." }],
-  },
-});
-mock.module("../lib/supabase/browser.ts", {
-  namedExports: {
-    getSupabaseBrowserClient: () => ({ storage: { from: () => ({
-      upload: async (path) => { uploadedPaths.push(path); return { error: null }; },
-      remove: async (paths) => { if (paths) removedPaths.push(...(Array.isArray(paths) ? paths : [paths])); return { error: null }; },
-      download: async (path) => { downloadedPaths.push(path); return downloadFailure ? { data: null, error: new Error("private storage unavailable") } : { data: new Blob(["%PDF-1.4"]), error: null }; },
-    }) } }),
-  },
-});
+mock.module("../lib/pdf-import.ts", mockOpts({
+  importPdf: async (file) => [{ id: `mock-${file.name}`, documentId: file.name === "Cocina.pdf" ? "11111111-1111-4111-8111-111111111111" : file.name === "A.pdf" ? "33333333-3333-4333-8333-333333333333" : file.name === "B.pdf" ? "44444444-4444-4444-8444-444444444444" : "22222222-2222-4222-8222-222222222222", filename: file.name, page: 1, status: "pending", method: "text", text: "ENSALADA\n100 g tomate\n1. Mezclar." }],
+}));
+mock.module("../lib/supabase/browser.ts", mockOpts({
+  getSupabaseBrowserClient: () => ({ storage: { from: () => ({
+    upload: async (path) => { uploadedPaths.push(path); return { error: null }; },
+    remove: async (paths) => { if (paths) removedPaths.push(...(Array.isArray(paths) ? paths : [paths])); return { error: null }; },
+    download: async (path) => { downloadedPaths.push(path); return downloadFailure ? { data: null, error: new Error("private storage unavailable") } : { data: new Blob(["%PDF-1.4"]), error: null }; },
+  }) } }),
+}));
 
 const { render, screen, within, fireEvent, cleanup, waitFor } = await import("@testing-library/react");
 const { default: NutritionExtras } = await import("../components/NutritionExtras.tsx");

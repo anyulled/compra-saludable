@@ -2,6 +2,7 @@ import test, { afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { JSDOM } from 'jsdom';
+import { mockOpts } from './helpers/mock-module.mjs';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
 globalThis.window = dom.window;
@@ -11,10 +12,9 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.MutationObserver = dom.window.MutationObserver;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-mock.module('next/image', {
-  defaultExport: ({ src, alt }) => React.createElement('img', { src, alt }),
-  exports: { default: ({ src, alt }) => React.createElement('img', { src, alt }) },
-});
+mock.module('next/image', mockOpts({
+  default: ({ src, alt }) => React.createElement('img', { src, alt }),
+}));
 const { render, screen, within, fireEvent, cleanup, waitFor } = await import('@testing-library/react');
 const { default: Dashboard } = await import('../app/dashboard.tsx');
 const originalFetch = globalThis.fetch;
