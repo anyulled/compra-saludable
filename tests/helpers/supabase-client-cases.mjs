@@ -1,5 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mockOpts } from './mock-module.mjs';
 
 let options;
 let created = 0;
@@ -12,20 +13,14 @@ const ssrMock = {
   createServerClient: (url, key, config) => { options = { url, key, ...config }; return fakeClient; },
   createBrowserClient: (url, key) => { created++; return { url, key }; },
 };
-mock.module('@supabase/ssr', {
-  namedExports: ssrMock,
-  exports: ssrMock,
-});
+mock.module('@supabase/ssr', mockOpts(ssrMock));
 const headersMock = {
   cookies: async () => ({
     getAll: () => [{ name: 'session', value: 'value' }],
     set: (name, value, settings) => { if (throwOnCookie) throw Error('cookies are read-only'); written.push([name, value, settings]); },
   }),
 };
-mock.module('next/headers', {
-  namedExports: headersMock,
-  exports: headersMock,
-});
+mock.module('next/headers', mockOpts(headersMock));
 
 const { getSupabaseServerClient, requireAuthorizedUser } = await import('../../lib/supabase/server.ts');
 const { getSupabaseBrowserClient } = await import('../../lib/supabase/browser.ts');

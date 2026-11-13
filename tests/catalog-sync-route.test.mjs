@@ -1,13 +1,13 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import { mockOpts } from "./helpers/mock-module.mjs";
 
 process.env.ENDPOINT_OAUTH = "catalog-test-secret";
 process.env.NEXT_PUBLIC_SUPABASE_URL = "https://supabase.example";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "service-test-key";
-mock.module("next/server.js", {
-  namedExports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
-  exports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
-});
+mock.module("next/server.js", mockOpts({
+  NextResponse: { json: (body, init) => Response.json(body, init) },
+}));
 
 let syncState = null;
 let upserted = [];
@@ -21,10 +21,9 @@ const supabase = {
   },
   async rpc(_name, args) { activated = args; return { error: null }; },
 };
-mock.module("@supabase/supabase-js", {
-  namedExports: { createClient: () => supabase },
-  exports: { createClient: () => supabase },
-});
+mock.module("@supabase/supabase-js", mockOpts({
+  createClient: () => supabase,
+}));
 const { POST } = await import("../app/api/cron/mercadona-catalog/route.ts");
 
 test("rechaza autorización incorrecta", async () => {

@@ -1,5 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mockOpts } from './mock-module.mjs';
 
 const household = '2d3a3934-5165-4dbc-845f-41b58bfe191e';
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://supabase.example';
@@ -37,14 +38,12 @@ const db = {
   },
   async rpc() { rpcCalls++; return { data: [rpcResult], error }; },
 };
-mock.module('@supabase/ssr', {
-  namedExports: { createServerClient: () => db },
-  exports: { createServerClient: () => db },
-});
-mock.module('next/headers', {
-  namedExports: { cookies: async () => ({ getAll: () => [], set() {} }) },
-  exports: { cookies: async () => ({ getAll: () => [], set() {} }) },
-});
+mock.module('@supabase/ssr', mockOpts({
+  createServerClient: () => db,
+}));
+mock.module('next/headers', mockOpts({
+  cookies: async () => ({ getAll: () => [], set() {} }),
+}));
 
 const workspace = await import('../../app/api/workspace/route.ts');
 const mercadona = await import('../../app/api/mercadona/route.ts');

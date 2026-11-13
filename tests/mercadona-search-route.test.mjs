@@ -1,5 +1,6 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import { mockOpts } from "./helpers/mock-module.mjs";
 
 const catalogProduct = { id: "x1", display_name: "Garbanzos", published: true, price_instructions: { unit_price: "1.25", unit_size: 500, size_format: "g" } };
 process.env.NEXT_PUBLIC_SUPABASE_URL = "https://supabase.example";
@@ -14,28 +15,19 @@ const supabase = {
 };
 const user = { id: "10000000-0000-4000-8000-000000000001", email: "one@example.test", email_confirmed_at: "2026-01-01T00:00:00Z", app_metadata: { provider: "google", providers: ["google"] }, identities: [{ provider: "google" }] };
 supabase.auth = { getUser: async () => ({ data: { user }, error: null }) };
-mock.module("next/server.js", {
-  namedExports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
-  exports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
-});
-mock.module("@supabase/ssr", {
-  namedExports: { createServerClient: () => supabase },
-  exports: { createServerClient: () => supabase },
-});
-mock.module("next/headers", {
-  namedExports: { cookies: async () => ({ getAll: () => [], set() {} }) },
-  exports: { cookies: async () => ({ getAll: () => [], set() {} }) },
-});
-mock.module("../lib/mercadona.cjs", {
-  namedExports: {
-    normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }),
-    searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); },
-  },
-  exports: {
-    normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }),
-    searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); },
-  },
-});
+mock.module("next/server.js", mockOpts({
+  NextResponse: { json: (body, init) => Response.json(body, init) },
+}));
+mock.module("@supabase/ssr", mockOpts({
+  createServerClient: () => supabase,
+}));
+mock.module("next/headers", mockOpts({
+  cookies: async () => ({ getAll: () => [], set() {} }),
+}));
+mock.module("../lib/mercadona.cjs", mockOpts({
+  normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }),
+  searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); },
+}));
 const { POST } = await import("../app/api/mercadona/search/route.ts");
 const request = () => new Request("https://mesa.example/api/mercadona/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ queries: ["garbanzos"] }) });
 
