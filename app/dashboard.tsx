@@ -15,7 +15,7 @@ import { importPdf } from "../lib/pdf-import";
 import { extractRecipe } from "../lib/recipe-extraction.mjs";
 import { getSupabaseBrowserClient } from "../lib/supabase/browser";
 import { mercadonaResultMessage, requireMercadonaPrice } from "../lib/mercadona-lookup.mjs";
-import { pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { collectDraftDocumentPaths, pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
 import { isCurrentPdfPreview, isHouseholdPdfPath } from "../lib/pdf-preview-state.mjs";
 import { notifyBatchReady, pdfImportBlockMessage, requestBrowserNotificationPermission, runWithConcurrency } from "../lib/pdf-batch.mjs";
 import type { PdfImportJobView } from "../components/RecipeReviewPanels";
@@ -71,6 +71,44 @@ async function resolveBatchIngredientsMercadona(
 }
 
 const id = () => crypto.randomUUID().replaceAll("-", "");
+
+function confirmResetRecipes(): boolean {
+  if (typeof window !== "undefined" && typeof window.confirm === "function") {
+    return window.confirm(
+      "¿Seguro que quieres restablecer las recetas? Se eliminarán todas las recetas guardadas y los borradores importados.",
+    );
+  }
+  return true;
+}
+
+async function removeHouseholdDocuments(documentPaths: string[]): Promise<void> {
+  if (documentPaths.length === 0) return;
+  try {
+    const storage = getSupabaseBrowserClient().storage.from("household-documents");
+    await storage.remove(documentPaths);
+  } catch {
+    // Non-blocking best-effort cleanup
+  }
+}
+
+function StorageGateScreen(props: {
+  storageStatus: string;
+  storageError: string;
+  legacySeed: State | null;
+  legacyCopy: string | null;
+  downloadLegacySeed: () => void;
+  downloadLegacy: () => void;
+  message: string;
+  downloadCurrent: () => void;
+  retry: () => void;
+}) {
+  const { storageStatus, storageError, legacySeed, legacyCopy, downloadLegacySeed, downloadLegacy, message, downloadCurrent, retry } = props;
+  if (storageStatus === "loading") return <WorkspaceLoadingScreen />;
+  if (storageStatus === "setup") return <WorkspaceSetupScreen error={storageError} legacySeed={legacySeed} legacyCopy={legacyCopy} downloadLegacySeed={downloadLegacySeed} downloadLegacy={downloadLegacy} />;
+  if (storageStatus === "conflict" || storageStatus === "error") return <WorkspaceConflictScreen error={storageError} message={message} legacyCopy={legacyCopy} status={storageStatus} downloadCurrent={downloadCurrent} downloadLegacy={downloadLegacy} retry={retry} />;
+  return null;
+}
+
 export default function Dashboard({
   email,
   householdId,
@@ -102,6 +140,7 @@ export default function Dashboard({
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [persistingUpload, setPersistingUpload] = useState(false);
+  const [resettingRecipes, setResettingRecipes] = useState(false);
   const [importProgress, setImportProgress] = useState("");
   const [importJobs, setImportJobs] = useState<PdfImportJobView[]>([]);
   const [selectedDraft, setSelectedDraft] = useState<string | null>(null);
@@ -204,6 +243,7 @@ export default function Dashboard({
       ),
     }));
   const uploadPdf = async (files: File[]) => {
+    if (resettingRecipes) return;
     const blockedMessage = pdfImportBlockMessage(files.length, storageStatus);
     if (blockedMessage) { setMessage(blockedMessage); return; }
     const notificationsEnabled = await requestBrowserNotificationPermission();
@@ -274,6 +314,7 @@ export default function Dashboard({
     draft: RecipeDraft,
     status: NonNullable<RecipeDraft["status"]>,
   ) => {
+    if (resettingRecipes) return;
     setData((s) => ({
       ...s,
       drafts: (s.drafts || []).map((d) =>
@@ -285,11 +326,13 @@ export default function Dashboard({
       },
     }));
   };
-  const approveDocument = (documentId: string) =>
+  const approveDocument = (documentId: string) => {
+    if (resettingRecipes) return;
     setData((s) => ({
       ...s,
       approvedDocuments: { ...s.approvedDocuments, [documentId]: true },
     }));
+  };
   const openDocument = async (draft: RecipeDraft) => {
     const documentId = draft.storedDocumentId || draft.documentId;
     if (isCurrentPdfPreview(preview, documentId)) return;
@@ -317,6 +360,7 @@ export default function Dashboard({
     }
   };
   const reviewDraft = (draft: RecipeDraft) => {
+    if (resettingRecipes) return;
     setPageStatus(draft, "reviewing");
     setTab("Recetas");
     setReviewConfirmed(true);
@@ -325,6 +369,7 @@ export default function Dashboard({
     setRecipe(buildRecipeFromDraft(draft, id()));
   };
   const addRecipe = async () => {
+    if (resettingRecipes) return;
     const validation = recipeValidationMessage(recipe, selectedDraft, reviewConfirmed);
     if (validation) { setMessage(validation); return; }
     const newRecipe: Recipe = approvedRecipe(recipe, id(), selectedDraft);
@@ -350,14 +395,17 @@ export default function Dashboard({
       setMessage(error instanceof Error ? `Receta guardada. No se pudo completar la búsqueda: ${error.message}` : "Receta guardada, pero no se pudo buscar en Mercadona.");
     }
   };
-  const updateRecipe = (recipeId: string, patch: Partial<Recipe>) =>
+  const updateRecipe = (recipeId: string, patch: Partial<Recipe>) => {
+    if (resettingRecipes) return;
     setData((state) => ({
       ...state,
       recipes: state.recipes.map((item) =>
         item.id === recipeId ? { ...item, ...patch } : item,
       ),
     }));
+  };
   const chooseIngredientProduct = (selectedRecipe: Recipe, ingredientIndex: number, chosen: Product) => {
+    if (resettingRecipes) return;
     setData(updateChosenIngredient.bind(null, selectedRecipe, ingredientIndex, chosen));
     setMessage(chosen.id ? `Producto ${chosen.name} asociado a ${selectedRecipe.name}.` : `El ingrediente “${selectedRecipe.ingredients[ingredientIndex]?.name || ""}” queda sin asociar.`);
   };
@@ -383,16 +431,7 @@ export default function Dashboard({
       setMessage(error instanceof Error ? error.message : "No se pudo repetir la búsqueda.");
     }
   };
-  const resetRecipes = async () => {
-    if (
-      typeof window !== "undefined" &&
-      typeof window.confirm === "function" &&
-      !window.confirm(
-        "¿Seguro que quieres restablecer las recetas? Se eliminarán todas las recetas guardadas y los borradores importados.",
-      )
-    ) {
-      return;
-    }
+  const clearRecipeEditorState = () => {
     if (preview) {
       URL.revokeObjectURL(preview.url);
       setPreview(null);
@@ -415,25 +454,25 @@ export default function Dashboard({
     });
     setImportJobs([]);
     setImportProgress("");
-
+  };
+  const resetRecipes = async () => {
+    if (resettingRecipes || !confirmResetRecipes()) return;
+    setResettingRecipes(true);
+    clearRecipeEditorState();
+    const documentPaths = collectDraftDocumentPaths(dataRef.current.drafts);
     try {
-      const documentPaths = [
-        ...new Set(
-          (dataRef.current.drafts || [])
-            .map((d) => d.documentPath)
-            .filter((p): p is string => Boolean(p)),
-        ),
-      ];
-      if (documentPaths.length > 0) {
-        const storage = getSupabaseBrowserClient().storage.from("household-documents");
-        await storage.remove(documentPaths);
-      }
-    } catch {
-      // Non-blocking cleanup
+      await persistWorkspace(resetRecipesState(dataRef.current));
+      await removeHouseholdDocuments(documentPaths);
+      setMessage("Se han restablecido los datos de recetas y borradores.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo restablecer el espacio compartido.",
+      );
+    } finally {
+      setResettingRecipes(false);
     }
-
-    setData((state) => resetRecipesState(state));
-    setMessage("Se han restablecido los datos de recetas y borradores.");
   };
   const generate = async () => {
     setBusy(true);
@@ -504,9 +543,8 @@ export default function Dashboard({
     : null;
   const recipeById = (rid: string) => data.recipes.find((r) => r.id === rid);
   const total = data.shopping.reduce((n, p) => n + p.price * p.packages, 0);
-  if (storageStatus === "loading") return <WorkspaceLoadingScreen />;
-  if (storageStatus === "setup") return <WorkspaceSetupScreen error={storageError} legacySeed={legacySeed} legacyCopy={legacyCopy} downloadLegacySeed={downloadLegacySeed} downloadLegacy={downloadLegacy} />;
-  if (storageStatus === "conflict" || storageStatus === "error") return <WorkspaceConflictScreen error={storageError} message={message} legacyCopy={legacyCopy} status={storageStatus} downloadCurrent={downloadCurrent} downloadLegacy={downloadLegacy} retry={() => void retry()} />;
+  const gateScreen = StorageGateScreen({ storageStatus, storageError, legacySeed, legacyCopy, downloadLegacySeed, downloadLegacy, message, downloadCurrent, retry: () => void retry() });
+  if (gateScreen) return gateScreen;
   return (
     <DashboardLayout
       email={email}
@@ -514,7 +552,7 @@ export default function Dashboard({
       onTabChange={setTab}
       data={data}
       downloadCurrent={downloadCurrent}
-      importing={importing}
+      importing={importing || resettingRecipes}
       persistingUpload={persistingUpload}
       importProgress={importProgress}
     >
@@ -539,7 +577,7 @@ export default function Dashboard({
         updateProduct={updateProduct}
         recipe={recipe}
         setRecipe={setRecipe}
-        importing={importing}
+        importing={importing || resettingRecipes}
         importProgress={importProgress}
         importJobs={importJobs}
         uploadPdf={uploadPdf}

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { collectDraftDocumentPaths, pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
 
 test("exige los cuatro objetivos para habilitar la generación del menú", () => {
   const complete = { calories: 1800, protein: 90, carbs: 180, fat: 60 };
@@ -79,4 +79,20 @@ test("restablece recetas, borradores, documentos aprobados y planes conservando 
   assert.equal(reset.planDirty, false);
   assert.equal(reset.products.length, 1);
   assert.equal(reset.profiles.length, 2);
+});
+
+test("collectDraftDocumentPaths extrae y deduplica rutas de documentos válidas", () => {
+  assert.deepEqual(collectDraftDocumentPaths(undefined), []);
+  assert.deepEqual(collectDraftDocumentPaths([]), []);
+  assert.deepEqual(
+    collectDraftDocumentPaths([
+      { documentPath: "h1/doc1.pdf" },
+      { documentPath: "h1/doc1.pdf" },
+      { documentPath: undefined },
+      { documentPath: "" },
+      null,
+      { documentPath: "h1/doc2.pdf" },
+    ]),
+    ["h1/doc1.pdf", "h1/doc2.pdf"],
+  );
 });

@@ -672,3 +672,43 @@ test("restablecer recetas en el dashboard elimina recetas y borradores tras conf
     globalThis.window.confirm = previousConfirm;
   }
 });
+
+test("restablecer recetas no elimina archivos si falla el guardado en el servidor", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousConfirm = globalThis.window.confirm;
+  removedPaths = [];
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const documentId = "11111111-1111-4111-8111-111111111111";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  const stored = {
+    profiles: [profile, { ...profile, name: "B" }],
+    products: [],
+    recipes: [{ id: "r1", name: "Ensalada", meal: "Comida", calories: 200, protein: 5, carbs: 10, fat: 15, ingredients: [], rating: 3, notes: "", approved: true }],
+    plan: [],
+    shopping: [],
+    confirmed: false,
+    drafts: [{ id: "d1", documentId, documentPath: `${householdId}/${documentId}.pdf`, filename: "Cocina.pdf", page: 1, status: "reviewed", method: "text", text: "ENSALADA" }],
+    approvedDocuments: { [documentId]: true },
+  };
+  globalThis.fetch = async (url, init = {}) => {
+    if (url === "/api/workspace" && init.method === "PUT") {
+      return new Response(JSON.stringify({ error: "conflict" }), { status: 409 });
+    }
+    if (url === "/api/workspace") return new Response(JSON.stringify({ state: stored, revision: 1 }), { status: 200 });
+    throw Error(`Petición inesperada: ${url}`);
+  };
+
+  try {
+    globalThis.window.confirm = () => true;
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    assert.ok(screen.getByText("Ensalada"));
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer recetas" }));
+    await waitFor(() => assert.equal(removedPaths.length, 0), { timeout: 1000 });
+    assert.equal(removedPaths.length, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.window.confirm = previousConfirm;
+  }
+});
