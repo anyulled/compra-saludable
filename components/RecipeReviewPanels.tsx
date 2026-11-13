@@ -117,20 +117,35 @@ function countDraftStatuses(drafts: RecipeDraft[]) {
   return { pending, reviewed, discarded };
 }
 
-export function DraftReviewList({ drafts, recipes, selectedDraft, review, setStatus, setSelectedDraft }: {
+export function DraftReviewList({ drafts, recipes, selectedDraft, review, setStatus, setSelectedDraft, onReset }: {
   drafts: RecipeDraft[];
   recipes: State["recipes"];
   selectedDraft: string | null;
   review: (draft: RecipeDraft) => void;
   setStatus: (draft: RecipeDraft, status: PageState) => void;
   setSelectedDraft: (id: string | null) => void;
+  onReset?: () => void;
 }) {
   if (drafts.length === 0) return null;
   const { pending: pendingCount, reviewed: reviewedCount, discarded: discardedCount } = countDraftStatuses(drafts);
 
   return (
     <section className="card">
-      <h2>Páginas importadas</h2>
+      <div className="card-head">
+        <div>
+          <h2>Páginas importadas</h2>
+        </div>
+        {onReset && (
+          <button
+            type="button"
+            className="text-button"
+            style={{ color: "#c68c78" }}
+            onClick={onReset}
+          >
+            Descartar experimentos
+          </button>
+        )}
+      </div>
       {pendingCount === 0 && (
         <div className="import-summary-banner" style={{ marginBottom: "1rem" }}>
           <p className="help">

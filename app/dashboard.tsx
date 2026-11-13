@@ -15,7 +15,7 @@ import { importPdf } from "../lib/pdf-import";
 import { extractRecipe } from "../lib/recipe-extraction.mjs";
 import { getSupabaseBrowserClient } from "../lib/supabase/browser";
 import { mercadonaResultMessage, requireMercadonaPrice } from "../lib/mercadona-lookup.mjs";
-import { pdfFailureMessages, profileObjectivesComplete, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
 import { isCurrentPdfPreview, isHouseholdPdfPath } from "../lib/pdf-preview-state.mjs";
 import { notifyBatchReady, pdfImportBlockMessage, requestBrowserNotificationPermission, runWithConcurrency } from "../lib/pdf-batch.mjs";
 import type { PdfImportJobView } from "../components/RecipeReviewPanels";
@@ -383,6 +383,58 @@ export default function Dashboard({
       setMessage(error instanceof Error ? error.message : "No se pudo repetir la búsqueda.");
     }
   };
+  const resetRecipes = async () => {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.confirm === "function" &&
+      !window.confirm(
+        "¿Seguro que quieres restablecer las recetas? Se eliminarán todas las recetas guardadas y los borradores importados.",
+      )
+    ) {
+      return;
+    }
+    if (preview) {
+      URL.revokeObjectURL(preview.url);
+      setPreview(null);
+    }
+    setSelectedDraft(null);
+    setReviewConfirmed(false);
+    setOpeningDocument(null);
+    setRecipe({
+      id: "",
+      name: "",
+      meal: "Comida",
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      ingredients: [],
+      rating: 3,
+      notes: "",
+      approved: false,
+    });
+    setImportJobs([]);
+    setImportProgress("");
+
+    try {
+      const documentPaths = [
+        ...new Set(
+          (dataRef.current.drafts || [])
+            .map((d) => d.documentPath)
+            .filter((p): p is string => Boolean(p)),
+        ),
+      ];
+      if (documentPaths.length > 0) {
+        const storage = getSupabaseBrowserClient().storage.from("household-documents");
+        await storage.remove(documentPaths);
+      }
+    } catch {
+      // Non-blocking cleanup
+    }
+
+    setData((state) => resetRecipesState(state));
+    setMessage("Se han restablecido los datos de recetas y borradores.");
+  };
   const generate = async () => {
     setBusy(true);
     setMessage("");
@@ -518,6 +570,7 @@ export default function Dashboard({
         total={total}
         checkShoppingItem={checkShoppingItem}
         approveDocument={approveDocument}
+        resetRecipes={resetRecipes}
       />
     </DashboardLayout>
   );

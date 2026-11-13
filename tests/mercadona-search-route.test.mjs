@@ -14,10 +14,28 @@ const supabase = {
 };
 const user = { id: "10000000-0000-4000-8000-000000000001", email: "one@example.test", email_confirmed_at: "2026-01-01T00:00:00Z", app_metadata: { provider: "google", providers: ["google"] }, identities: [{ provider: "google" }] };
 supabase.auth = { getUser: async () => ({ data: { user }, error: null }) };
-mock.module("next/server.js", { exports: { NextResponse: { json: (body, init) => Response.json(body, init) } } });
-mock.module("@supabase/ssr", { exports: { createServerClient: () => supabase } });
-mock.module("next/headers", { exports: { cookies: async () => ({ getAll: () => [], set() {} }) } });
-mock.module("../lib/mercadona.cjs", { exports: { normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }), searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); } } });
+mock.module("next/server.js", {
+  namedExports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
+  exports: { NextResponse: { json: (body, init) => Response.json(body, init) } },
+});
+mock.module("@supabase/ssr", {
+  namedExports: { createServerClient: () => supabase },
+  exports: { createServerClient: () => supabase },
+});
+mock.module("next/headers", {
+  namedExports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+  exports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+});
+mock.module("../lib/mercadona.cjs", {
+  namedExports: {
+    normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }),
+    searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); },
+  },
+  exports: {
+    normalizeProduct: (value) => ({ name: value.display_name, unit: "g", size: 500, price: 1.25, source: "Mercadona" }),
+    searchManyProducts: async (queries) => { liveQueries = queries; return queries.map((query) => ({ query, products: [{ id: "live", name: "Garbanzos", unit: "g", size: 500, price: 1.3 }] })); },
+  },
+});
 const { POST } = await import("../app/api/mercadona/search/route.ts");
 const request = () => new Request("https://mesa.example/api/mercadona/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ queries: ["garbanzos"] }) });
 

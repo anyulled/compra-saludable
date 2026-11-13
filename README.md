@@ -47,7 +47,7 @@ npm run dev
 
 Abrir http://localhost:3000. Añadir dos perfiles con objetivos revisados, productos y al menos una receta para cada una de las cuatro comidas. Los valores de una receta son por ración y las cantidades de ingredientes usan las unidades de sus productos. El optimizador exige nutrientes diarios dentro del 10% de cada objetivo y compra envases enteros; tiene en cuenta existencias, preferencia y sodio por ración verificado por el usuario, pero no garantiza variedad, límites de sodio ni valida alergias. Las recetas sin sodio no participan en la optimización; se necesita al menos una receta con sodio por cada franja. Si se registran restricciones, bloquea la optimización.
 
-Requisitos: Node.js 22.13 o posterior y npm. Para ejecutar la suite y los controles locales antes de proponer cambios:
+Requisitos: Node.js 26.x o posterior y npm. Para ejecutar la suite y los controles locales antes de proponer cambios:
 
 ```sh
 npm test
