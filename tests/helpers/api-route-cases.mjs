@@ -37,8 +37,14 @@ const db = {
   },
   async rpc() { rpcCalls++; return { data: [rpcResult], error }; },
 };
-mock.module('@supabase/ssr', { exports: { createServerClient: () => db } });
-mock.module('next/headers', { exports: { cookies: async () => ({ getAll: () => [], set() {} }) } });
+mock.module('@supabase/ssr', {
+  namedExports: { createServerClient: () => db },
+  exports: { createServerClient: () => db },
+});
+mock.module('next/headers', {
+  namedExports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+  exports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+});
 
 const workspace = await import('../../app/api/workspace/route.ts');
 const mercadona = await import('../../app/api/mercadona/route.ts');

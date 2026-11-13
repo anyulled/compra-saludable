@@ -32,8 +32,14 @@ const db = { auth: {
     },
   };
 } };
-mock.module('@supabase/ssr', { exports: { createServerClient: () => db, createBrowserClient: () => db } });
-mock.module('next/headers', { exports: { cookies: async () => ({ getAll: () => [], set() {} }) } });
+mock.module('@supabase/ssr', {
+  namedExports: { createServerClient: () => db, createBrowserClient: () => db },
+  exports: { createServerClient: () => db, createBrowserClient: () => db },
+});
+mock.module('next/headers', {
+  namedExports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+  exports: { cookies: async () => ({ getAll: () => [], set() {} }) },
+});
 
 const { default: Home } = await import('../../app/page.tsx');
 const { default: Login } = await import('../../app/login/page.tsx');

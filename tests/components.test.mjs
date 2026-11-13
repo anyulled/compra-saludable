@@ -16,6 +16,7 @@ mock.module("next/image", {
 });
 let uploadedPaths = [];
 let downloadedPaths = [];
+let removedPaths = [];
 let downloadFailure = false;
 mock.module("../lib/pdf-import.ts", {
   namedExports: {
@@ -26,7 +27,7 @@ mock.module("../lib/supabase/browser.ts", {
   namedExports: {
     getSupabaseBrowserClient: () => ({ storage: { from: () => ({
       upload: async (path) => { uploadedPaths.push(path); return { error: null }; },
-      remove: async () => ({ error: null }),
+      remove: async (paths) => { if (paths) removedPaths.push(...(Array.isArray(paths) ? paths : [paths])); return { error: null }; },
       download: async (path) => { downloadedPaths.push(path); return downloadFailure ? { data: null, error: new Error("private storage unavailable") } : { data: new Blob(["%PDF-1.4"]), error: null }; },
     }) } }),
   },
@@ -42,6 +43,7 @@ const { default: WellnessHome } = await import("../components/WellnessHome.tsx")
 const { default: Dashboard } = await import("../app/dashboard.tsx");
 const { default: RecipeEntryForm } = await import("../components/RecipeEntryForm.tsx");
 const { default: IngredientProductResolver } = await import("../components/IngredientProductResolver.tsx");
+const { default: RecipesPanel } = await import("../components/RecipesPanel.tsx");
 const { DraftOriginalCard } = await import("../components/RecipeReviewPanels.tsx");
 const { RecipeImportCard } = await import("../components/RecipeReviewPanels.tsx");
 const { WorkspaceConflictScreen } = await import("../components/WorkspaceStatusScreens.tsx");
@@ -551,5 +553,125 @@ test("muestra el fallo al abrir un PDF privado y termina el estado de carga", as
   } finally {
     downloadFailure = false;
     globalThis.fetch = previousFetch;
+  }
+});
+
+test("RecipesPanel deshabilita el botón de restablecer si no hay recetas ni borradores y lo habilita si los hay", () => {
+  const recipe = { id: "", name: "", meal: "Comida", calories: 0, protein: 0, carbs: 0, fat: 0, ingredients: [], rating: 3, notes: "", approved: false };
+  const emptyData = { profiles: [], products: [], recipes: [], plan: [], shopping: [], confirmed: false, drafts: [] };
+  const { rerender } = render(React.createElement(RecipesPanel, {
+    data: emptyData,
+    recipe,
+    setRecipe: () => {},
+    importing: false,
+    importProgress: "",
+    importJobs: [],
+    uploadPdf: () => {},
+    selectedDraft: null,
+    setSelectedDraft: () => {},
+    selectedPage: undefined,
+    suggestions: null,
+    preview: null,
+    setPreview: () => {},
+    openingDocument: null,
+    openDocument: () => {},
+    setMessage: () => {},
+    setPageStatus: () => {},
+    reviewDraft: () => {},
+    reviewConfirmed: false,
+    setReviewConfirmed: () => {},
+    addRecipe: () => {},
+    updateRecipe: () => {},
+    chooseIngredientProduct: () => {},
+    retryIngredientSearch: () => {},
+    resetRecipes: () => {},
+  }));
+  const resetButton = screen.getByRole("button", { name: "Restablecer recetas" });
+  assert.equal(resetButton.disabled, true);
+
+  const dataWithDrafts = { ...emptyData, drafts: [{ id: "d1", filename: "test.pdf", page: 1, text: "receta" }] };
+  rerender(React.createElement(RecipesPanel, {
+    data: dataWithDrafts,
+    recipe,
+    setRecipe: () => {},
+    importing: false,
+    importProgress: "",
+    importJobs: [],
+    uploadPdf: () => {},
+    selectedDraft: null,
+    setSelectedDraft: () => {},
+    selectedPage: undefined,
+    suggestions: null,
+    preview: null,
+    setPreview: () => {},
+    openingDocument: null,
+    openDocument: () => {},
+    setMessage: () => {},
+    setPageStatus: () => {},
+    reviewDraft: () => {},
+    reviewConfirmed: false,
+    setReviewConfirmed: () => {},
+    addRecipe: () => {},
+    updateRecipe: () => {},
+    chooseIngredientProduct: () => {},
+    retryIngredientSearch: () => {},
+    resetRecipes: () => {},
+  }));
+  assert.equal(screen.getByRole("button", { name: "Restablecer recetas" }).disabled, false);
+});
+
+test("restablecer recetas en el dashboard elimina recetas y borradores tras confirmación", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousConfirm = globalThis.window.confirm;
+  removedPaths = [];
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const documentId = "11111111-1111-4111-8111-111111111111";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  let stored = {
+    profiles: [profile, { ...profile, name: "B" }],
+    products: [{ id: "p1", name: "Tomate", unit: "g", size: 500, price: 1.5, stock: 0, source: "Manual" }],
+    recipes: [{ id: "r1", name: "Ensalada", meal: "Comida", calories: 200, protein: 5, carbs: 10, fat: 15, ingredients: [], rating: 3, notes: "", approved: true }],
+    plan: [{ day: 0, meal: "Comida", recipeId: "r1", portions: [1, 1] }],
+    shopping: [{ id: "p1", name: "Tomate", packages: 1, size: 500, unit: "g", price: 1.5, checked: false }],
+    confirmed: true,
+    drafts: [{ id: "d1", documentId, documentPath: `${householdId}/${documentId}.pdf`, filename: "Cocina.pdf", page: 1, status: "reviewed", method: "text", text: "ENSALADA" }],
+    approvedDocuments: { [documentId]: true },
+  };
+  let revision = 1;
+  globalThis.fetch = async (url, init = {}) => {
+    if (url === "/api/workspace" && init.method === "PUT") {
+      const payload = JSON.parse(init.body);
+      stored = payload.state;
+      return new Response(JSON.stringify({ ok: true, revision: ++revision }), { status: 200 });
+    }
+    if (url === "/api/workspace") return new Response(JSON.stringify({ state: stored, revision }), { status: 200 });
+    throw Error(`Petición inesperada: ${url}`);
+  };
+
+  try {
+    // 1. Cancel confirmation does not reset
+    globalThis.window.confirm = () => false;
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    assert.ok(screen.getByText("Ensalada"));
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer recetas" }));
+    assert.equal(stored.recipes.length, 1);
+    assert.equal(stored.drafts.length, 1);
+
+    // 2. Accept confirmation resets recipes, drafts, plans and cleans up storage
+    globalThis.window.confirm = () => true;
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer recetas" }));
+    await waitFor(() => assert.equal(stored.recipes.length, 0), { timeout: 3000 });
+    assert.equal(stored.drafts.length, 0);
+    assert.deepEqual(stored.approvedDocuments, {});
+    assert.equal(stored.plan.length, 0);
+    assert.equal(stored.shopping.length, 0);
+    assert.equal(stored.products.length, 1);
+    assert.deepEqual(removedPaths, [`${householdId}/${documentId}.pdf`]);
+    assert.ok(await screen.findByText("Se han restablecido los datos de recetas y borradores."));
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.window.confirm = previousConfirm;
   }
 });

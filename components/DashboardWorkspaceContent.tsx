@@ -66,6 +66,7 @@ type Props = {
   total: number;
   checkShoppingItem: (id: string, checked: boolean) => void;
   approveDocument: (documentId: string) => void;
+  resetRecipes: () => void;
 };
 
 function WorkspaceNotices({ storageStatus, message, setMessage, legacyCopy, legacyWarning, downloadLegacy }: Pick<Props, "storageStatus" | "message" | "setMessage" | "legacyCopy" | "legacyWarning" | "downloadLegacy">) {
@@ -85,10 +86,10 @@ function ActiveTabContent(props: Props) {
       {tab === "Inicio" && <WellnessHome navigate={props.setTab} />}
       {tab === "Perfiles" && <Profiles profiles={data.profiles} update={props.updateProfile} />}
       {tab === "Productos" && <ProductsPanel products={data.products} product={props.product} setProduct={props.setProduct} query={props.mercadonaInput} setQuery={props.setMercadonaInput} busy={props.mercadonaBusy} onLookup={props.lookupMercadona} onAdd={props.addProduct} onUpdate={props.updateProduct} />}
-      {tab === "Recetas" && <RecipesPanel data={data} recipe={props.recipe} setRecipe={props.setRecipe} importing={props.importing} importProgress={props.importProgress} importJobs={props.importJobs} uploadPdf={props.uploadPdf} selectedDraft={props.selectedDraft} setSelectedDraft={props.setSelectedDraft} selectedPage={props.selectedPage} suggestions={props.suggestions} preview={props.preview} setPreview={props.setPreview} openingDocument={props.openingDocument} openDocument={props.openDocument} setMessage={props.setMessage} setPageStatus={props.setPageStatus} reviewDraft={props.reviewDraft} reviewConfirmed={props.reviewConfirmed} setReviewConfirmed={props.setReviewConfirmed} addRecipe={props.addRecipe} updateRecipe={props.updateRecipe} chooseIngredientProduct={props.chooseIngredientProduct} retryIngredientSearch={props.retryIngredientSearch} />}
+      {tab === "Recetas" && <RecipesPanel data={data} recipe={props.recipe} setRecipe={props.setRecipe} importing={props.importing} importProgress={props.importProgress} importJobs={props.importJobs} uploadPdf={props.uploadPdf} selectedDraft={props.selectedDraft} setSelectedDraft={props.setSelectedDraft} selectedPage={props.selectedPage} suggestions={props.suggestions} preview={props.preview} setPreview={props.setPreview} openingDocument={props.openingDocument} openDocument={props.openDocument} setMessage={props.setMessage} setPageStatus={props.setPageStatus} reviewDraft={props.reviewDraft} reviewConfirmed={props.reviewConfirmed} setReviewConfirmed={props.setReviewConfirmed} addRecipe={props.addRecipe} updateRecipe={props.updateRecipe} chooseIngredientProduct={props.chooseIngredientProduct} retryIngredientSearch={props.retryIngredientSearch} resetRecipes={props.resetRecipes} />}
       {tab === "Menú" && <MenuPlanningPanel data={data} ready={props.ready} busy={props.busy} stale={props.stale} dirty={props.dirty} onGenerate={props.generate} onUpdateOptions={props.updateOptimizationOptions} onUpdateLock={props.updateLock} onConfirm={props.confirmPlan} />}
       {tab === "Compra" && <ShoppingPanel data={data} stale={props.stale} dirty={props.dirty} total={props.total} onCheck={props.checkShoppingItem} onGoToMenu={() => props.setTab("Menú")} />}
-      {tab === "Biblioteca" && <Library data={data} review={props.reviewDraft} approveDocument={props.approveDocument} />}
+      {tab === "Biblioteca" && <Library data={data} review={props.reviewDraft} approveDocument={props.approveDocument} onResetRecipes={props.resetRecipes} />}
     </>
   );
 }

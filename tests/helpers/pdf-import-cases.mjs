@@ -8,20 +8,28 @@ let workerStarts = 0;
 let workerError = false;
 let ocrText = '';
 const globalWorkerOptions = {};
-mock.module('pdfjs-dist', { exports: {
+const pdfMock = {
   GlobalWorkerOptions: globalWorkerOptions,
   getDocument: () => ({
     promise: Promise.resolve({ numPages: pages.length, getPage: async number => pages[number - 1] }),
     destroy: async () => { destroyed++; },
   }),
-} });
-mock.module('tesseract.js', { exports: {
+};
+mock.module('pdfjs-dist', {
+  namedExports: pdfMock,
+  exports: pdfMock,
+});
+const tesseractMock = {
   createWorker: async () => {
     workerStarts++;
     if (workerError) throw Error('OCR no disponible');
     return { recognize: async () => ({ data: { text: ocrText } }), terminate: async () => { terminated++; } };
   },
-} });
+};
+mock.module('tesseract.js', {
+  namedExports: tesseractMock,
+  exports: tesseractMock,
+});
 globalThis.document = { createElement: () => ({ getContext: () => ({}), width: 0, height: 0 }) };
 
 const { importPdf, validatePdfFile, MAX_PDF_BYTES } = await import('../../lib/pdf-import.ts');

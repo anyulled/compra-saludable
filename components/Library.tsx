@@ -8,6 +8,7 @@ type Props = {
   data: State;
   review: (draft: RecipeDraft) => void;
   approveDocument: (id: string) => void;
+  onResetRecipes?: () => void;
 };
 const labels: Record<string, string> = {
   pending: "Pendiente",
@@ -15,7 +16,21 @@ const labels: Record<string, string> = {
   ready: "Revisado · pendiente de aprobar",
   approved: "Aprobado",
 };
-export default function Library({ data, review, approveDocument }: Props) {
+function LibraryResetButton({ onReset, visible }: { onReset?: () => void; visible: boolean }) {
+  if (!onReset || !visible) return null;
+  return (
+    <button
+      type="button"
+      className="text-button"
+      style={{ color: "#c68c78", whiteSpace: "nowrap" }}
+      onClick={onReset}
+    >
+      Restablecer recetas
+    </button>
+  );
+}
+
+export default function Library({ data, review, approveDocument, onResetRecipes }: Props) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const documents = summarizeImports(
@@ -39,6 +54,7 @@ export default function Library({ data, review, approveDocument }: Props) {
       (filter === "all" || filter === (r.approved ? "approved" : "pending")) &&
       match(r.name),
   );
+  const hasResetData = data.recipes.length > 0 || Boolean(data.drafts?.length);
   return (
     <>
       <div className="eyebrow muted">VUESTRA COLECCIÓN</div>
@@ -50,12 +66,17 @@ export default function Library({ data, review, approveDocument }: Props) {
         por revisar.
       </p>
       <section className="card">
-        <h2>Recetarios importados</h2>
-        <p className="help">
-          Un archivo puede aprobarse cuando todas sus páginas estén revisadas o
-          marcadas como no receta. El estado del archivo no sustituye la
-          revisión de cada receta.
-        </p>
+        <div className="card-head">
+          <div>
+            <h2>Recetarios importados</h2>
+            <p className="help">
+              Un archivo puede aprobarse cuando todas sus páginas estén revisadas o
+              marcadas como no receta. El estado del archivo no sustituye la
+              revisión de cada receta.
+            </p>
+          </div>
+          <LibraryResetButton onReset={onResetRecipes} visible={hasResetData} />
+        </div>
         {documents.length === 0 ? (
           <p className="help">Todavía no hay archivos importados.</p>
         ) : (

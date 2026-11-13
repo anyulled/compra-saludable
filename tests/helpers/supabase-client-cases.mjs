@@ -8,14 +8,24 @@ let authError = null;
 let throwOnCookie = false;
 const written = [];
 const fakeClient = { auth: { getUser: async () => ({ data: { user: sessionUser }, error: authError }) } };
-mock.module('@supabase/ssr', { exports: {
+const ssrMock = {
   createServerClient: (url, key, config) => { options = { url, key, ...config }; return fakeClient; },
   createBrowserClient: (url, key) => { created++; return { url, key }; },
-} });
-mock.module('next/headers', { exports: { cookies: async () => ({
-  getAll: () => [{ name: 'session', value: 'value' }],
-  set: (name, value, settings) => { if (throwOnCookie) throw Error('cookies are read-only'); written.push([name, value, settings]); },
-}) } });
+};
+mock.module('@supabase/ssr', {
+  namedExports: ssrMock,
+  exports: ssrMock,
+});
+const headersMock = {
+  cookies: async () => ({
+    getAll: () => [{ name: 'session', value: 'value' }],
+    set: (name, value, settings) => { if (throwOnCookie) throw Error('cookies are read-only'); written.push([name, value, settings]); },
+  }),
+};
+mock.module('next/headers', {
+  namedExports: headersMock,
+  exports: headersMock,
+});
 
 const { getSupabaseServerClient, requireAuthorizedUser } = await import('../../lib/supabase/server.ts');
 const { getSupabaseBrowserClient } = await import('../../lib/supabase/browser.ts');

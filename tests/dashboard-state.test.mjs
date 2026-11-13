@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pdfFailureMessages, profileObjectivesComplete, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
+import { pdfFailureMessages, profileObjectivesComplete, resetRecipesState, updateChosenIngredient, withPlanLock, withShoppingCheck } from "../lib/dashboard-state.mjs";
 
 test("exige los cuatro objetivos para habilitar la generación del menú", () => {
   const complete = { calories: 1800, protein: 90, carbs: 180, fat: 60 };
@@ -48,4 +48,35 @@ test("resume errores de OCR y de guardado sin duplicarlos", () => {
   ];
   const failures = pdfFailureMessages(results, [{ name: "A.pdf" }, { name: "B.pdf" }, { name: "C.pdf" }], "No se guardó el lote.");
   assert.deepEqual(failures, ["B.pdf: OCR falló", "C.pdf: error desconocido", "No se guardó el lote."]);
+});
+
+test("restablece recetas, borradores, documentos aprobados y planes conservando perfiles y productos", () => {
+  const profile = { name: "P1", calories: 2000, protein: 100, carbs: 200, fat: 70 };
+  const product = { id: "prod1", name: "Aceite", unit: "ml", size: 1000, price: 5, stock: 1, source: "Manual" };
+  const state = {
+    profiles: [profile, { ...profile, name: "P2" }],
+    products: [product],
+    recipes: [{ id: "r1", name: "Ensalada", meal: "Comida", calories: 200, protein: 5, carbs: 10, fat: 15, ingredients: [], rating: 3, notes: "", approved: true }],
+    drafts: [{ id: "d1", filename: "recetas.pdf", page: 1, text: "receta" }],
+    approvedDocuments: { "doc-1": true },
+    planLocks: [{ day: 0, meal: "Comida", recipeId: "r1" }],
+    plan: [{ day: 0, meal: "Comida", recipeId: "r1", portions: [1, 1] }],
+    shopping: [{ id: "s1", name: "Tomate", packages: 1, size: 500, unit: "g", price: 2, checked: false }],
+    confirmed: true,
+    planBasis: "snap",
+    planDirty: false,
+    leftovers: [{ id: "prod1", name: "Aceite", unit: "ml", stock: 1, purchased: 0, used: 10, remaining: 990, expiredStock: 0 }],
+  };
+  const reset = resetRecipesState(state);
+  assert.equal(reset.recipes.length, 0);
+  assert.equal(reset.drafts.length, 0);
+  assert.deepEqual(reset.approvedDocuments, {});
+  assert.equal(reset.planLocks.length, 0);
+  assert.equal(reset.plan.length, 0);
+  assert.equal(reset.shopping.length, 0);
+  assert.equal(reset.confirmed, false);
+  assert.equal(reset.planBasis, undefined);
+  assert.equal(reset.planDirty, false);
+  assert.equal(reset.products.length, 1);
+  assert.equal(reset.profiles.length, 2);
 });
