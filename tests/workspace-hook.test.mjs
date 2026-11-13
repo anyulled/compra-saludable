@@ -263,3 +263,25 @@ test('el guardado de PDF conserva las ediciones hechas mientras espera la respue
   assert.equal(result.current.data.confirmed, true);
   assert.equal(result.current.data.drafts.length, 1);
 });
+
+test('resetWorkspace guarda el estado restablecido y actualiza el estado local', async () => {
+  let savedState;
+  globalThis.fetch = async (_url, opts) => {
+    if (opts?.method === 'PUT') {
+      savedState = JSON.parse(opts.body).state;
+      return json({ ok: true, revision: 2 });
+    }
+    return json({ state: { ...state(), recipes: [{ id: 'r1', name: 'R', meal: 'Comida', calories: 100, protein: 10, carbs: 10, fat: 5, ingredients: [], rating: 3, notes: '', approved: true }], drafts: [{ id: 'd1', filename: 'x.pdf', page: 1, text: 'Receta' }] }, revision: 1 });
+  };
+  const { result } = renderHook(() => useWorkspace());
+  await waitFor(() => assert.equal(result.current.status, 'ready'));
+  assert.equal(result.current.data.recipes.length, 1);
+  assert.equal(result.current.data.drafts.length, 1);
+  const reset = { ...result.current.data, recipes: [], drafts: [] };
+  await act(async () => { await result.current.resetWorkspace(reset); });
+  assert.equal(result.current.status, 'ready');
+  assert.equal(result.current.data.recipes.length, 0);
+  assert.equal(result.current.data.drafts.length, 0);
+  assert.equal(savedState.recipes.length, 0);
+  assert.equal(savedState.drafts.length, 0);
+});

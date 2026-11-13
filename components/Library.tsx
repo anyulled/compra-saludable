@@ -23,7 +23,10 @@ function LibraryResetButton({ onReset, visible }: { onReset?: () => void; visibl
       type="button"
       className="text-button"
       style={{ color: "#c68c78", whiteSpace: "nowrap" }}
-      onClick={onReset}
+      onClick={() => {
+        console.info("[Library] Clic en 'Restablecer recetas'.");
+        onReset();
+      }}
     >
       Restablecer recetas
     </button>

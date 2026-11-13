@@ -667,6 +667,8 @@ test("restablecer recetas en el dashboard elimina recetas y borradores tras conf
     assert.equal(stored.products.length, 1);
     assert.deepEqual(removedPaths, [`${householdId}/${documentId}.pdf`]);
     assert.ok(await screen.findByText("Se han restablecido los datos de recetas y borradores."));
+    await waitFor(() => assert.equal(screen.queryByText("Ensalada"), null));
+    assert.equal(screen.queryByText("Descartar experimentos"), null);
   } finally {
     globalThis.fetch = previousFetch;
     globalThis.window.confirm = previousConfirm;
@@ -707,6 +709,52 @@ test("restablecer recetas no elimina archivos si falla el guardado en el servido
     fireEvent.click(screen.getByRole("button", { name: "Restablecer recetas" }));
     await waitFor(() => assert.equal(removedPaths.length, 0), { timeout: 1000 });
     assert.equal(removedPaths.length, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.window.confirm = previousConfirm;
+  }
+});
+
+test("botón descartar experimentos en la lista de borradores restablece recetas y elimina borradores de la UI", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousConfirm = globalThis.window.confirm;
+  removedPaths = [];
+  const householdId = "00000000-0000-4000-8000-000000000001";
+  const documentId = "11111111-1111-4111-8111-111111111111";
+  const profile = { name: "A", age: 40, height: 170, weight: 80, sex: "female", activity: 1.2, calories: 1800, protein: 90, carbs: 180, fat: 60, medicationRisk: "no", otherSafety: "no" };
+  let stored = {
+    profiles: [profile, { ...profile, name: "B" }],
+    products: [{ id: "p1", name: "Lechuga", unit: "g", size: 200, price: 1, stock: 0, source: "Manual" }],
+    recipes: [{ id: "r1", name: "Ensalada", meal: "Comida", calories: 200, protein: 5, carbs: 10, fat: 15, ingredients: [], rating: 3, notes: "", approved: true }],
+    plan: [],
+    shopping: [],
+    confirmed: false,
+    drafts: [{ id: "d1", documentId, documentPath: `${householdId}/${documentId}.pdf`, filename: "Cocina.pdf", page: 1, status: "reviewed", method: "text", text: "ENSALADA" }],
+    approvedDocuments: { [documentId]: true },
+  };
+  let revision = 1;
+  globalThis.fetch = async (url, init = {}) => {
+    if (url === "/api/workspace" && init.method === "PUT") {
+      const payload = JSON.parse(init.body);
+      stored = payload.state;
+      return new Response(JSON.stringify({ ok: true, revision: ++revision }), { status: 200 });
+    }
+    if (url === "/api/workspace") return new Response(JSON.stringify({ state: stored, revision }), { status: 200 });
+    throw Error(`Petición inesperada: ${url}`);
+  };
+
+  try {
+    globalThis.window.confirm = () => true;
+    render(React.createElement(Dashboard, { email: "user@example.com", householdId }));
+    await screen.findByText(/Una forma más/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recetas" })[0]);
+    assert.ok(screen.getByText("Descartar experimentos"));
+    fireEvent.click(screen.getByText("Descartar experimentos"));
+    await waitFor(() => assert.equal(stored.recipes.length, 0), { timeout: 3000 });
+    assert.equal(stored.drafts.length, 0);
+    assert.deepEqual(removedPaths, [`${householdId}/${documentId}.pdf`]);
+    await waitFor(() => assert.equal(screen.queryByText("Descartar experimentos"), null));
+    assert.equal(screen.queryByText("Ensalada"), null);
   } finally {
     globalThis.fetch = previousFetch;
     globalThis.window.confirm = previousConfirm;

@@ -140,7 +140,10 @@ export function DraftReviewList({ drafts, recipes, selectedDraft, review, setSta
             type="button"
             className="text-button"
             style={{ color: "#c68c78" }}
-            onClick={onReset}
+            onClick={() => {
+              console.info("[DraftReviewList] Clic en 'Descartar experimentos'.");
+              onReset();
+            }}
           >
             Descartar experimentos
           </button>

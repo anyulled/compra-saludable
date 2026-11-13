@@ -61,7 +61,10 @@ export default function RecipesPanel(props: Props) {
           type="button"
           className="secondary"
           disabled={!hasResetData}
-          onClick={resetRecipes}
+          onClick={() => {
+            console.info("[RecipesPanel] Clic en 'Restablecer recetas'.");
+            resetRecipes();
+          }}
           title="Eliminar todas las recetas y descartar los borradores importados"
           aria-label="Restablecer recetas"
         >

@@ -9,6 +9,7 @@ import {
   canStartWorkspaceWrite,
 } from "./workspace-limits.mjs";
 import { reconcileWorkspaceWrite } from "./workspace-reconcile.mjs";
+import { resetRecipesState } from "./dashboard-state.mjs";
 
 type StorageStatus = "loading" | "setup" | "ready" | "saving" | "conflict" | "error";
 const LEGACY_KEY = "mesa-v1";
@@ -200,6 +201,32 @@ async function recoverWorkspaceWrite(error: unknown, read: () => Promise<Workspa
   return false;
 }
 
+async function waitForIdleWorkspace(running: Mutable<boolean>, maxAttempts = 20) {
+  let attempts = 0;
+  while (running.current && attempts < maxAttempts) {
+    await new Promise((r) => setTimeout(r, 50));
+    attempts++;
+  }
+}
+
+async function saveWithRebase(
+  snapshot: string,
+  revision: Mutable<number>,
+  save: (snapshot: string, rev: number) => Promise<{ response: Response; body: any }>,
+  read: () => Promise<WorkspaceRemote>,
+) {
+  let res = await save(snapshot, revision.current);
+  if (res.response.status === 409) {
+    console.warn("[resetWorkspace] Conflicto de revisión al guardar (409). Reintentando con la versión más reciente del servidor...");
+    const remote = await read();
+    if (remote.state) {
+      const rebased = encode(resetRecipesState(remote.state));
+      res = await save(rebased, remote.revision);
+    }
+  }
+  return res;
+}
+
 export function useWorkspace() {
   const [data, setData] = useState<State>(initial);
   const [status, setStatus] = useState<StorageStatus>("loading");
@@ -371,6 +398,36 @@ export function useWorkspace() {
     },
     [read, save, setSafeStatus, status],
   );
+  const resetWorkspace = useCallback(
+    async (next: State) => {
+      console.info("[resetWorkspace] Guardando espacio restablecido...");
+      if (!isWorkspace(next) || !fitsWorkspaceLimit(next)) {
+        throw Error("El espacio restablecido no es válido o supera el límite de 3 MiB.");
+      }
+      await waitForIdleWorkspace(running);
+      if (running.current) {
+        throw Error("Hay una operación de guardado en curso. Inténtalo de nuevo.");
+      }
+      const snapshot = encode(next);
+      running.current = true;
+      setSafeStatus("saving");
+      try {
+        const { response, body } = await saveWithRebase(snapshot, revision, save, read);
+        if (!response.ok) throw Error(body?.error || "No se pudo guardar el espacio restablecido.");
+        revision.current = body.revision;
+        acknowledged.current = snapshot;
+        current.current = snapshot;
+        blocked.current = false;
+        setError("");
+        setData(next);
+        setSafeStatus("ready");
+        console.info("[resetWorkspace] Espacio restablecido con éxito. Revisión:", body.revision);
+      } finally {
+        running.current = false;
+      }
+    },
+    [read, save, setSafeStatus],
+  );
   const download = useCallback((content: string, filename: string) => {
     const url = URL.createObjectURL(
       new Blob([content], { type: "application/json" }),
@@ -391,6 +448,7 @@ export function useWorkspace() {
     legacyWarning,
     retry,
     persistWorkspace,
+    resetWorkspace,
     downloadLegacySeed: () =>
       legacySeed && download(JSON.stringify(legacySeed), "mesa-copia-navegador.json"),
     downloadCurrent: () =>

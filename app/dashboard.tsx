@@ -74,20 +74,29 @@ const id = () => crypto.randomUUID().replaceAll("-", "");
 
 function confirmResetRecipes(): boolean {
   if (typeof window !== "undefined" && typeof window.confirm === "function") {
-    return window.confirm(
+    console.info("[confirmResetRecipes] Mostrando confirmación de restablecimiento...");
+    const confirmed = window.confirm(
       "¿Seguro que quieres restablecer las recetas? Se eliminarán todas las recetas guardadas y los borradores importados.",
     );
+    console.info("[confirmResetRecipes] Decisión del usuario:", confirmed ? "Aceptado" : "Cancelado");
+    return confirmed;
   }
   return true;
 }
 
 async function removeHouseholdDocuments(documentPaths: string[]): Promise<void> {
   if (documentPaths.length === 0) return;
+  console.info("[removeHouseholdDocuments] Eliminando archivos de Supabase storage:", documentPaths);
   try {
     const storage = getSupabaseBrowserClient().storage.from("household-documents");
-    await storage.remove(documentPaths);
-  } catch {
-    // Non-blocking best-effort cleanup
+    const { error } = await storage.remove(documentPaths);
+    if (error) {
+      console.warn("[removeHouseholdDocuments] Error devuelto por Supabase storage.remove:", error);
+    } else {
+      console.info("[removeHouseholdDocuments] Archivos eliminados exitosamente de storage.");
+    }
+  } catch (err) {
+    console.warn("[removeHouseholdDocuments] Excepción al intentar eliminar archivos de storage:", err);
   }
 }
 
@@ -126,6 +135,7 @@ export default function Dashboard({
     legacyWarning,
     retry,
     persistWorkspace,
+    resetWorkspace,
     downloadCurrent,
     downloadLegacy,
     downloadLegacySeed,
@@ -456,15 +466,27 @@ export default function Dashboard({
     setImportProgress("");
   };
   const resetRecipes = async () => {
-    if (resettingRecipes || !confirmResetRecipes()) return;
+    console.info("[resetRecipes] Solicitud de restablecimiento de recetas recibida.");
+    if (resettingRecipes) {
+      console.warn("[resetRecipes] Operación ya en curso, ignorando solicitud duplicada.");
+      return;
+    }
+    if (!confirmResetRecipes()) {
+      console.info("[resetRecipes] Restablecimiento cancelado por el usuario.");
+      return;
+    }
     setResettingRecipes(true);
     clearRecipeEditorState();
     const documentPaths = collectDraftDocumentPaths(dataRef.current.drafts);
+    console.info("[resetRecipes] Iniciando restablecimiento en el servidor. Documentos a limpiar:", documentPaths);
     try {
-      await persistWorkspace(resetRecipesState(dataRef.current));
+      await resetWorkspace(resetRecipesState(dataRef.current));
+      console.info("[resetRecipes] Espacio compartido restablecido en el servidor. Limpiando almacenamiento...");
       await removeHouseholdDocuments(documentPaths);
       setMessage("Se han restablecido los datos de recetas y borradores.");
+      console.info("[resetRecipes] Restablecimiento completado correctamente.");
     } catch (error) {
+      console.error("[resetRecipes] Error al restablecer las recetas:", error);
       setMessage(
         error instanceof Error
           ? error.message
